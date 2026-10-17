@@ -13,7 +13,6 @@ import dev.tongt.mcserverauth.storage.Account;
 import dev.tongt.mcserverauth.storage.AccountStore;
 import io.papermc.paper.command.brigadier.BasicCommand;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
-import io.papermc.paper.dialog.Dialog;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
@@ -186,6 +185,8 @@ public final class AuthAdminCommand implements BasicCommand {
         }
         try {
             store.setServerPasswordHash(hasher.hash(password));
+            // A remembered session skips the server password too; make everyone prove the new one.
+            sessions.clear();
             sender.sendMessage(messages.get("command.server-password-set"));
             return null;
         } catch (SQLException e) {
@@ -223,8 +224,9 @@ public final class AuthAdminCommand implements BasicCommand {
         Component error = null;
         try {
             while (true) {
-                Dialog dialog = dialogs.newPassword("dialog.set-server-password.title", error, true);
-                Response r = waiter.await(DialogWaiter.keyOf(player), () -> player.showDialog(dialog), config.loginTimeout());
+                Response r = waiter.await(DialogWaiter.keyOf(player),
+                        dialogs.newPassword("dialog.set-server-password.title", error, true), player::showDialog,
+                        config.loginTimeout());
                 if (!r.is(DialogFactory.SUBMIT)) {
                     player.closeDialog();
                     return;

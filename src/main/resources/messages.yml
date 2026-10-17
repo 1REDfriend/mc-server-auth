@@ -67,6 +67,7 @@ kick:
   too-many-attempts: "Too many wrong attempts."
   ip-banned: "Too many wrong attempts from your address. Try again in <minutes> minutes."
   name-in-use: "A player with this name is already online or logging in."
+  too-many-connections: "Too many connections from your address. Try again shortly."
   wrong-case: "This account is registered as <name>. Use exactly that name, including capital letters."
   unavailable: "Login is unavailable right now. Try again later."
   registration-unavailable: "Registration is unavailable. Contact an admin."

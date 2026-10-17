@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class CodeServiceTest {
     private static final String IP = "127.0.0.1";
+    private static final String OTHER_IP = "10.0.0.9";
     private final MutableClock clock = new MutableClock(Instant.parse("2026-10-17T00:00:00Z"));
     private final CodeService codes = new CodeService(clock, new SecureRandom(), Duration.ofMinutes(15), 5);
 
@@ -30,14 +31,14 @@ class CodeServiceTest {
     void codeIsSixDigitsAndWorksOnce() {
         String code = issue(Purpose.REGISTER, "steve");
         assertTrue(code.matches("\\d{6}"));
-        assertEquals(Check.OK, codes.verify(Purpose.REGISTER, "steve", code));
-        assertEquals(Check.NONE, codes.verify(Purpose.REGISTER, "steve", code));
+        assertEquals(Check.OK, codes.verify(Purpose.REGISTER, "steve", code, IP));
+        assertEquals(Check.NONE, codes.verify(Purpose.REGISTER, "steve", code, IP));
     }
 
     @Test
     void purposesAreSeparate() {
         String code = issue(Purpose.REGISTER, "steve");
-        assertEquals(Check.NONE, codes.verify(Purpose.RESET, "steve", code));
+        assertEquals(Check.NONE, codes.verify(Purpose.RESET, "steve", code, IP));
     }
 
     @Test
@@ -45,10 +46,10 @@ class CodeServiceTest {
         String code = issue(Purpose.RESET, "steve");
         String wrong = code.equals("000000") ? "111111" : "000000";
         for (int i = 0; i < 4; i++) {
-            assertEquals(Check.WRONG, codes.verify(Purpose.RESET, "steve", wrong));
+            assertEquals(Check.WRONG, codes.verify(Purpose.RESET, "steve", wrong, IP));
         }
-        assertEquals(Check.BURNED, codes.verify(Purpose.RESET, "steve", wrong));
-        assertEquals(Check.NONE, codes.verify(Purpose.RESET, "steve", code));
+        assertEquals(Check.BURNED, codes.verify(Purpose.RESET, "steve", wrong, IP));
+        assertEquals(Check.NONE, codes.verify(Purpose.RESET, "steve", code, IP));
     }
 
     @Test
@@ -57,7 +58,7 @@ class CodeServiceTest {
         assertTrue(codes.hasLiveCode(Purpose.RESET, "steve"));
         clock.advance(Duration.ofMinutes(15));
         assertFalse(codes.hasLiveCode(Purpose.RESET, "steve"));
-        assertEquals(Check.NONE, codes.verify(Purpose.RESET, "steve", code));
+        assertEquals(Check.NONE, codes.verify(Purpose.RESET, "steve", code, IP));
     }
 
     @Test
@@ -68,9 +69,9 @@ class CodeServiceTest {
         clock.advance(Duration.ofSeconds(60));
         String second = issue(Purpose.REGISTER, "steve");
         if (!first.equals(second)) {
-            assertEquals(Check.WRONG, codes.verify(Purpose.REGISTER, "steve", first));
+            assertEquals(Check.WRONG, codes.verify(Purpose.REGISTER, "steve", first, IP));
         }
-        assertEquals(Check.OK, codes.verify(Purpose.REGISTER, "steve", second));
+        assertEquals(Check.OK, codes.verify(Purpose.REGISTER, "steve", second, IP));
     }
 
     @Test
@@ -113,7 +114,7 @@ class CodeServiceTest {
         clock.advance(Duration.ofSeconds(60));
         Issued b = issued(Purpose.REGISTER, "steve");
         codes.cancelIssue(Purpose.REGISTER, "steve", IP, b);
-        assertEquals(Check.OK, codes.verify(Purpose.REGISTER, "steve", a));
+        assertEquals(Check.OK, codes.verify(Purpose.REGISTER, "steve", a, IP));
     }
 
     @Test
@@ -122,7 +123,7 @@ class CodeServiceTest {
         clock.advance(Duration.ofSeconds(60));
         Issued b = issued(Purpose.REGISTER, "steve");
         codes.cancelIssue(Purpose.REGISTER, "steve", IP, a);
-        assertEquals(Check.OK, codes.verify(Purpose.REGISTER, "steve", b.code()));
+        assertEquals(Check.OK, codes.verify(Purpose.REGISTER, "steve", b.code(), IP));
 
         Issued c = issued(Purpose.RESET, "alex");
         codes.cancelIssue(Purpose.RESET, "alex", IP, c);
@@ -138,13 +139,13 @@ class CodeServiceTest {
         Issued b = issued(Purpose.REGISTER, "steve");
         codes.cancelIssue(Purpose.REGISTER, "steve", IP, a);
         assertTrue(codes.hasLiveCode(Purpose.REGISTER, "steve"));
-        assertEquals(Check.OK, codes.verify(Purpose.REGISTER, "steve", b.code()));
+        assertEquals(Check.OK, codes.verify(Purpose.REGISTER, "steve", b.code(), IP));
     }
 
     @Test
     void nullCodeDoesNotThrow() {
         issue(Purpose.RESET, "steve");
-        assertEquals(Check.WRONG, codes.verify(Purpose.RESET, "steve", null));
+        assertEquals(Check.WRONG, codes.verify(Purpose.RESET, "steve", null, IP));
     }
 
     @Test
@@ -154,5 +155,63 @@ class CodeServiceTest {
         codes.invalidate("steve");
         assertFalse(codes.hasLiveCode(Purpose.REGISTER, "steve"));
         assertFalse(codes.hasLiveCode(Purpose.RESET, "steve"));
+    }
+
+    @Test
+    void wrongAttemptsFromAnotherIpNeverBurnTheCode() {
+        String code = issue(Purpose.RESET, "steve");
+        String wrong = code.equals("000000") ? "111111" : "000000";
+        for (int i = 0; i < 20; i++) {
+            assertEquals(Check.WRONG, codes.verify(Purpose.RESET, "steve", wrong, OTHER_IP));
+        }
+        assertEquals(Check.OK, codes.verify(Purpose.RESET, "steve", code, IP));
+    }
+
+    @Test
+    void wrongAttemptsFromAnotherIpDoNotAddToTheRequesterCount() {
+        String code = issue(Purpose.RESET, "steve");
+        String wrong = code.equals("000000") ? "111111" : "000000";
+        assertEquals(Check.WRONG, codes.verify(Purpose.RESET, "steve", wrong, OTHER_IP));
+        for (int i = 0; i < 4; i++) {
+            assertEquals(Check.WRONG, codes.verify(Purpose.RESET, "steve", wrong, IP));
+        }
+        assertEquals(Check.BURNED, codes.verify(Purpose.RESET, "steve", wrong, IP));
+    }
+
+    @Test
+    void correctCodeFromAnotherIpIsAccepted() {
+        String code = issue(Purpose.RESET, "steve");
+        assertEquals(Check.OK, codes.verify(Purpose.RESET, "steve", code, OTHER_IP));
+    }
+
+    @Test
+    void cooldownRemainingDoesNotIssue() {
+        assertTrue(codes.cooldownRemaining(Purpose.REGISTER, "steve", IP).isEmpty());
+        assertTrue(codes.cooldownRemaining(Purpose.REGISTER, "steve", IP).isEmpty());
+        assertFalse(codes.hasLiveCode(Purpose.REGISTER, "steve"));
+        issue(Purpose.REGISTER, "steve");
+        assertEquals(Duration.ofSeconds(60), codes.cooldownRemaining(Purpose.REGISTER, "steve", IP).orElseThrow());
+    }
+
+    @Test
+    void cooldownRemainingReportsThePerIpLimit() {
+        issue(Purpose.RESET, "a");
+        issue(Purpose.RESET, "b");
+        issue(Purpose.RESET, "c");
+        assertEquals(Duration.ofHours(1), codes.cooldownRemaining(Purpose.RESET, "d", IP).orElseThrow());
+        assertTrue(codes.cooldownRemaining(Purpose.RESET, "d", OTHER_IP).isEmpty());
+    }
+
+    @Test
+    void issuePrunesExpiredState() {
+        for (int i = 0; i < 5; i++) {
+            issue(Purpose.REGISTER, "player" + i);
+        }
+        issue(Purpose.RESET, "steve");
+        assertTrue(codes.trackedEntries() > 0);
+        clock.advance(Duration.ofHours(2));
+        issue(Purpose.REGISTER, "fresh");
+        // Only the fresh issue remains: its live code, cooldown, undo record and IP send window.
+        assertEquals(4, codes.trackedEntries());
     }
 }

@@ -16,8 +16,15 @@ import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 
-/** Builds every dialog the plugin shows. Button actions are the constants below. */
+/**
+ * Builds every dialog the plugin shows. Button actions are the constants below.
+ *
+ * <p>Each method returns a template: a function from a per-display nonce to the dialog. The nonce is put into
+ * every button's click id as {@code <action>.<nonce>}, so {@link DialogWaiter} can ignore a click on a dialog that
+ * is no longer the one being awaited.
+ */
 public final class DialogFactory {
     public static final String SUBMIT = "submit";
     public static final String CANCEL = "cancel";
@@ -40,27 +47,27 @@ public final class DialogFactory {
         this.passwordMaxLength = passwordMaxLength;
     }
 
-    public Dialog serverPassword(@Nullable Component error) {
+    public Function<String, Dialog> serverPassword(@Nullable Component error) {
         return build("dialog.server-password.title", body("dialog.server-password.body", error),
                 List.of(password("password", "input.password")),
                 List.of(button("button.submit", SUBMIT), button("button.cancel", CANCEL)), false);
     }
 
-    public Dialog register(@Nullable Component error) {
+    public Function<String, Dialog> register(@Nullable Component error) {
         return build("dialog.register.title", body("dialog.register.body", error),
                 List.of(password("password", "input.password"), password("confirm", "input.confirm"),
                         text("email", "input.email", EMAIL_MAX_LENGTH)),
                 List.of(button("button.submit", SUBMIT), button("button.cancel", CANCEL)), false);
     }
 
-    public Dialog login(@Nullable Component error) {
+    public Function<String, Dialog> login(@Nullable Component error) {
         return build("dialog.login.title", body("dialog.login.body", error),
                 List.of(password("password", "input.password")),
                 List.of(button("button.login", SUBMIT), button("button.forgot", FORGOT), button("button.cancel", CANCEL)),
                 false);
     }
 
-    public Dialog forgotMenu(String maskedEmail, @Nullable Component error) {
+    public Function<String, Dialog> forgotMenu(String maskedEmail, @Nullable Component error) {
         return build("dialog.forgot.title", body("dialog.forgot.body", error, email(maskedEmail)),
                 List.of(),
                 List.of(button("button.send-code", SEND_CODE), button("button.have-code", HAVE_CODE),
@@ -69,7 +76,7 @@ public final class DialogFactory {
     }
 
     /** Code entry for email verification (reset = false) or password reset (reset = true). */
-    public Dialog code(boolean reset, String maskedEmail, @Nullable Component error) {
+    public Function<String, Dialog> code(boolean reset, String maskedEmail, @Nullable Component error) {
         String title = reset ? "dialog.reset-code.title" : "dialog.verify-email.title";
         String bodyKey = reset ? "dialog.reset-code.body" : "dialog.verify-email.body";
         return build(title, body(bodyKey, error, email(maskedEmail)),
@@ -80,21 +87,29 @@ public final class DialogFactory {
     }
 
     /** New password + confirm. Used for reset, and by admins to set the server password. */
-    public Dialog newPassword(String titleKey, @Nullable Component error, boolean closable) {
+    public Function<String, Dialog> newPassword(String titleKey, @Nullable Component error, boolean closable) {
         return build(titleKey, error == null ? List.of() : List.of(DialogBody.plainMessage(error)),
                 List.of(password("password", "input.new-password"), password("confirm", "input.confirm")),
                 List.of(button("button.submit", SUBMIT), button("button.cancel", CANCEL)), closable);
     }
 
-    public Dialog changePassword(@Nullable Component error) {
+    public Function<String, Dialog> changePassword(@Nullable Component error) {
         return build("dialog.change-password.title", error == null ? List.of() : List.of(DialogBody.plainMessage(error)),
                 List.of(password("current", "input.current-password"), password("password", "input.new-password"),
                         password("confirm", "input.confirm")),
                 List.of(button("button.submit", SUBMIT), button("button.cancel", CANCEL)), true);
     }
 
-    private Dialog build(String titleKey, List<DialogBody> body, List<DialogInput> inputs,
-                         List<ActionButton> buttons, boolean closable) {
+    /** A button before its click id is known. */
+    private record Button(Component label, String action) {}
+
+    /** Click id value for one action on one displayed dialog. */
+    static String clickId(String action, String nonce) {
+        return action + "." + nonce;
+    }
+
+    private Function<String, Dialog> build(String titleKey, List<DialogBody> body, List<DialogInput> inputs,
+                                           List<Button> buttons, boolean closable) {
         DialogBase base = DialogBase.builder(messages.get(titleKey))
                 .canCloseWithEscape(closable)
                 .afterAction(DialogBase.DialogAfterAction.WAIT_FOR_RESPONSE)
@@ -103,8 +118,17 @@ public final class DialogFactory {
                 .build();
         // Four buttons read better as a 2 x 2 grid than as a row of three plus one.
         int columns = buttons.size() == 4 ? 2 : Math.min(buttons.size(), 3);
-        DialogType type = DialogType.multiAction(buttons).columns(columns).build();
-        return Dialog.create(factory -> factory.empty().base(base).type(type));
+        return nonce -> {
+            List<ActionButton> actions = buttons.stream()
+                    .map(b -> ActionButton.builder(b.label())
+                            .width(BUTTON_WIDTH)
+                            .action(DialogAction.customClick(
+                                    Key.key(DialogWaiter.NAMESPACE, clickId(b.action(), nonce)), null))
+                            .build())
+                    .toList();
+            DialogType type = DialogType.multiAction(actions).columns(columns).build();
+            return Dialog.create(factory -> factory.empty().base(base).type(type));
+        };
     }
 
     private List<DialogBody> body(String key, @Nullable Component error, TagResolver... resolvers) {
@@ -128,10 +152,7 @@ public final class DialogFactory {
         return DialogInput.text(id, messages.get(labelKey)).width(INPUT_WIDTH).maxLength(maxLength).build();
     }
 
-    private ActionButton button(String labelKey, String action) {
-        return ActionButton.builder(messages.get(labelKey))
-                .width(BUTTON_WIDTH)
-                .action(DialogAction.customClick(Key.key(DialogWaiter.NAMESPACE, action), null))
-                .build();
+    private Button button(String labelKey, String action) {
+        return new Button(messages.get(labelKey), action);
     }
 }

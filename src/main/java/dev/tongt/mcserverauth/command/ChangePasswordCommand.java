@@ -12,7 +12,6 @@ import dev.tongt.mcserverauth.storage.Account;
 import dev.tongt.mcserverauth.storage.AccountStore;
 import io.papermc.paper.command.brigadier.BasicCommand;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
-import io.papermc.paper.dialog.Dialog;
 import net.kyori.adventure.text.Component;
 import org.bukkit.entity.Player;
 
@@ -81,8 +80,8 @@ public final class ChangePasswordCommand implements BasicCommand {
         int failures = 0;
         try {
             while (true) {
-                Dialog dialog = dialogs.changePassword(error);
-                Response r = waiter.await(DialogWaiter.keyOf(player), () -> player.showDialog(dialog), config.loginTimeout());
+                Response r = waiter.await(DialogWaiter.keyOf(player), dialogs.changePassword(error), player::showDialog,
+                        config.loginTimeout());
                 if (!r.is(DialogFactory.SUBMIT)) {
                     player.closeDialog();
                     return;
@@ -111,7 +110,12 @@ public final class ChangePasswordCommand implements BasicCommand {
                     error = messages.get(problem.get(), rules.placeholders());
                     continue;
                 }
-                store.updatePassword(player.getName(), hasher.hash(password));
+                if (!store.updatePassword(player.getName(), hasher.hash(password))) {
+                    // The account was deleted by an admin while the dialog was open.
+                    player.closeDialog();
+                    player.sendMessage(messages.get("command.error"));
+                    return;
+                }
                 sessions.forget(AccountStore.key(player.getName()));
                 player.closeDialog();
                 player.sendMessage(messages.get("command.password-changed"));

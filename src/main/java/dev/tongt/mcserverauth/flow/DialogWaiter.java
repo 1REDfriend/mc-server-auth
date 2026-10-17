@@ -4,10 +4,10 @@ import com.destroystokyo.paper.event.player.PlayerConnectionCloseEvent;
 import io.papermc.paper.connection.PlayerCommonConnection;
 import io.papermc.paper.connection.PlayerConfigurationConnection;
 import io.papermc.paper.connection.PlayerGameConnection;
+import io.papermc.paper.dialog.Dialog;
 import io.papermc.paper.dialog.DialogResponseView;
 import io.papermc.paper.event.player.PlayerCustomClickEvent;
 import net.kyori.adventure.key.Key;
-import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -24,6 +24,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
+import java.util.function.Function;
 
 /**
  * Turns dialog button clicks into a blocking call: show a dialog, wait for the player's answer.
@@ -31,6 +34,9 @@ import java.util.concurrent.TimeoutException;
  * <p>Configuration-phase waits are keyed by the connection object itself, so a second connection with the same
  * name (and therefore the same offline UUID) can neither answer nor cancel another connection's dialog. In-game
  * waits are keyed by the player's UUID; only one in-world player can hold a UUID.
+ *
+ * <p>Every displayed dialog gets a fresh nonce in its click ids; a click whose nonce is not the one of the dialog
+ * currently awaited for that key (for example a late click on a dialog that was already replaced) is ignored.
  */
 public final class DialogWaiter implements Listener {
     public static final String NAMESPACE = "mcserverauth";
@@ -73,7 +79,11 @@ public final class DialogWaiter implements Listener {
         }
     }
 
-    private final Map<Object, CompletableFuture<Response>> pending = new ConcurrentHashMap<>();
+    /** One awaited dialog: the nonce in its click ids and the future its answer completes. */
+    private record Waiting(String nonce, CompletableFuture<Response> future) {}
+
+    private final Map<Object, Waiting> pending = new ConcurrentHashMap<>();
+    private final AtomicLong nonces = new AtomicLong();
 
     private final Set<UUID> claimed = ConcurrentHashMap.newKeySet();
 
@@ -110,16 +120,21 @@ public final class DialogWaiter implements Listener {
      * Shows a dialog and blocks the calling thread until the player answers, the wait is cancelled
      * ({@link Response#CLOSED}), or the timeout passes. Never call from the main server thread.
      *
-     * @param key from {@link #keyOf(PlayerConfigurationConnection)} or {@link #keyOf(Player)}
+     * @param key    from {@link #keyOf(PlayerConfigurationConnection)} or {@link #keyOf(Player)}
+     * @param dialog template from {@link DialogFactory}, given this display's nonce
+     * @param show   shows the built dialog to the player
      */
-    public Response await(Object key, Runnable showDialog, Duration timeout) throws TimeoutException {
+    public Response await(Object key, Function<String, Dialog> dialog, Consumer<Dialog> show, Duration timeout)
+            throws TimeoutException {
+        String nonce = Long.toString(nonces.incrementAndGet());
         CompletableFuture<Response> future = new CompletableFuture<>();
-        CompletableFuture<Response> previous = pending.put(key, future);
+        Waiting waiting = new Waiting(nonce, future);
+        Waiting previous = pending.put(key, waiting);
         if (previous != null) {
-            previous.complete(Response.CLOSED);
+            previous.future().complete(Response.CLOSED);
         }
         try {
-            showDialog.run();
+            show.accept(dialog.apply(nonce));
             long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(Math.max(1, timeout.toMillis()));
             while (true) {
                 long left = deadline - System.nanoTime();
@@ -141,7 +156,7 @@ public final class DialogWaiter implements Listener {
         } catch (ExecutionException e) {
             return Response.CLOSED;
         } finally {
-            pending.remove(key, future);
+            pending.remove(key, waiting);
         }
     }
 
@@ -153,9 +168,9 @@ public final class DialogWaiter implements Listener {
     }
 
     private void complete(Object key, Response response) {
-        CompletableFuture<Response> future = pending.remove(key);
-        if (future != null) {
-            future.complete(response);
+        Waiting waiting = pending.remove(key);
+        if (waiting != null) {
+            waiting.future().complete(response);
         }
     }
 
@@ -169,25 +184,27 @@ public final class DialogWaiter implements Listener {
         if (key == null) {
             return;
         }
-        CompletableFuture<Response> future = pending.get(key);
-        if (future != null) {
-            future.complete(new Response(id.value(), event.getDialogResponseView()));
+        // Click ids are <action>.<nonce>; see DialogFactory.clickId.
+        String value = id.value();
+        int dot = value.lastIndexOf('.');
+        if (dot < 0) {
+            return;
+        }
+        Waiting waiting = pending.get(key);
+        if (waiting != null && waiting.nonce().equals(value.substring(dot + 1))) {
+            waiting.future().complete(new Response(value.substring(0, dot), event.getDialogResponseView()));
         }
     }
 
     /**
      * The event only carries a UUID, which a refused duplicate connection shares with the real player, so it is
-     * used as a trigger to check which waits really lost their connection.
+     * used as a trigger to check which configuration-phase waits really lost their connection. In-game waits are
+     * cancelled by {@link #onQuit}; this event may fire off the main thread, where the Bukkit player API is unsafe.
      */
     @EventHandler
     public void onConnectionClose(PlayerConnectionCloseEvent event) {
         for (Object key : pending.keySet()) {
-            boolean gone = switch (key) {
-                case ConnectionKey c -> !c.connection.isConnected();
-                case UUID playerId -> Bukkit.getPlayer(playerId) == null;
-                default -> false;
-            };
-            if (gone) {
+            if (key instanceof ConnectionKey c && !c.connection.isConnected()) {
                 complete(key, Response.CLOSED);
             }
         }

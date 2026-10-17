@@ -15,7 +15,7 @@ import java.util.Optional;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-/** Checks that run before the configuration phase: IP ban, duplicate name, wrong letter case. */
+/** Checks that run before the configuration phase: IP ban, connections per IP, duplicate name, wrong letter case. */
 public final class PreLoginGuard implements Listener {
     private final Messages messages;
     private final AttemptLimiter limiter;
@@ -43,6 +43,12 @@ public final class PreLoginGuard implements Listener {
             long minutes = Math.max(1, (ban.get().toSeconds() + 59) / 60);
             event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_BANNED,
                     messages.get("kick.ip-banned", Placeholder.unparsed("minutes", Long.toString(minutes))));
+            return;
+        }
+
+        // Each connection in the flow holds a name; cap them per IP so one host cannot hold many names.
+        if (flow.tooManyConnections(event.getAddress())) {
+            event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER, messages.get("kick.too-many-connections"));
             return;
         }
 

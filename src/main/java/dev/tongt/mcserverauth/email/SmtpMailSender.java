@@ -11,29 +11,51 @@ import jakarta.mail.internet.MimeMessage;
 
 import java.util.Date;
 import java.util.Properties;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class SmtpMailSender implements MailSender {
     private static final String TIMEOUT_MILLIS = "10000";
     private static final int MAIL_THREADS = 3;
+    /** Emails waiting for a free thread; more than this are refused, which the caller treats as a failed send. */
+    private static final int QUEUE_CAPACITY = 50;
+
+    private static final int QUEUED = 0;
+    private static final int STARTED = 1;
+    private static final int WITHDRAWN = 2;
+
+    /** Hands one message to the SMTP server. Replaceable in tests. */
+    @FunctionalInterface
+    interface Delivery {
+        void deliver(String to, String subject, String body) throws Exception;
+    }
 
     private final AuthConfig.Smtp smtp;
     private final ExecutorService executor;
+    private final Delivery delivery;
 
     public SmtpMailSender(AuthConfig.Smtp smtp) {
+        this(smtp, MAIL_THREADS, QUEUE_CAPACITY, null);
+    }
+
+    /** @param delivery null for real SMTP delivery */
+    SmtpMailSender(AuthConfig.Smtp smtp, int threads, int queueCapacity, Delivery delivery) {
         this.smtp = smtp;
+        this.delivery = delivery != null ? delivery : this::deliver;
         // Jakarta Mail finds its SMTP provider through the context class loader, which must be the plugin's.
         ClassLoader pluginLoader = SmtpMailSender.class.getClassLoader();
-        this.executor = Executors.newFixedThreadPool(MAIL_THREADS, runnable -> {
-            Thread thread = new Thread(runnable, "McServerAuth-mail");
-            thread.setDaemon(true);
-            thread.setContextClassLoader(pluginLoader);
-            return thread;
-        });
+        this.executor = new ThreadPoolExecutor(threads, threads, 0, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(queueCapacity), runnable -> {
+                    Thread thread = new Thread(runnable, "McServerAuth-mail");
+                    thread.setDaemon(true);
+                    thread.setContextClassLoader(pluginLoader);
+                    return thread;
+                });
     }
 
     @Override
@@ -42,17 +64,29 @@ public final class SmtpMailSender implements MailSender {
     }
 
     @Override
-    public CompletableFuture<Void> send(String to, String subject, String body) {
+    public Sending send(String to, String subject, String body) {
         if (!available()) {
-            return CompletableFuture.failedFuture(new IllegalStateException("SMTP is not configured"));
+            return Sending.failed(new IllegalStateException("SMTP is not configured"));
         }
-        return CompletableFuture.runAsync(() -> {
-            try {
-                deliver(to, subject, body);
-            } catch (MessagingException e) {
-                throw new CompletionException(e);
-            }
-        }, executor);
+        AtomicInteger state = new AtomicInteger(QUEUED);
+        CompletableFuture<Void> done = new CompletableFuture<>();
+        try {
+            executor.execute(() -> {
+                if (!state.compareAndSet(QUEUED, STARTED)) {
+                    done.completeExceptionally(new IllegalStateException("Withdrawn before sending"));
+                    return;
+                }
+                try {
+                    delivery.deliver(to, subject, body);
+                    done.complete(null);
+                } catch (Throwable e) {
+                    done.completeExceptionally(e);
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            return Sending.failed(e);
+        }
+        return new Sending(done, () -> state.compareAndSet(QUEUED, WITHDRAWN));
     }
 
     private void deliver(String to, String subject, String body) throws MessagingException {

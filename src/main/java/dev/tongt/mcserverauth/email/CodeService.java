@@ -11,6 +11,8 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 
 /** Issues and checks short-lived 6-digit email codes. In-memory; a restart invalidates all codes. */
 public final class CodeService {
@@ -46,12 +48,15 @@ public final class CodeService {
         final byte[] salt;
         final byte[] hash;
         final Instant expires;
+        /** Only wrong attempts from this IP count toward burning the code. */
+        final String requesterIp;
         int wrongAttempts;
 
-        LiveCode(byte[] salt, byte[] hash, Instant expires) {
+        LiveCode(byte[] salt, byte[] hash, Instant expires, String requesterIp) {
             this.salt = salt;
             this.hash = hash;
             this.expires = expires;
+            this.requesterIp = requesterIp;
         }
     }
 
@@ -74,29 +79,70 @@ public final class CodeService {
         this.maxAttempts = maxAttempts;
     }
 
+    /**
+     * How long until {@link #issue} would succeed for this subject and IP, or empty if it would succeed now.
+     * Issues nothing and uses no send slot, so callers can check before doing expensive work.
+     */
+    public synchronized Optional<Duration> cooldownRemaining(Purpose purpose, String subject, String ip) {
+        return cooldown(purpose, subject, ip, clock.instant());
+    }
+
     public synchronized Issue issue(Purpose purpose, String subject, String ip) {
         Instant now = clock.instant();
+        prune(now);
+        Optional<Duration> wait = cooldown(purpose, subject, ip, now);
+        if (wait.isPresent()) {
+            return new CoolingDown(wait.get());
+        }
         Key key = new Key(purpose, subject);
-        Instant last = lastSent.get(key);
-        if (last != null && now.isBefore(last.plus(purpose.cooldown))) {
-            return new CoolingDown(Duration.between(now, last.plus(purpose.cooldown)));
-        }
         Deque<Instant> sends = ipSends.computeIfAbsent(new IpKey(purpose, ip), k -> new ArrayDeque<>());
-        while (!sends.isEmpty() && !sends.peekFirst().isAfter(now.minus(HOUR))) {
-            sends.removeFirst();
-        }
-        if (sends.size() >= purpose.sendsPerIpPerHour) {
-            return new CoolingDown(Duration.between(now, sends.peekFirst().plus(HOUR)));
-        }
         String code = String.format("%06d", random.nextInt(1_000_000));
         byte[] salt = new byte[16];
         random.nextBytes(salt);
-        LiveCode previousLive = live.put(key, new LiveCode(salt, digest(salt, code), now.plus(validity)));
+        LiveCode previousLive = live.put(key, new LiveCode(salt, digest(salt, code), now.plus(validity), ip));
         Instant previousLastSent = lastSent.put(key, now);
         Issued issued = new Issued(code, now);
         undo.put(key, new Undo(issued, previousLive, previousLastSent));
         sends.addLast(now);
         return issued;
+    }
+
+    private Optional<Duration> cooldown(Purpose purpose, String subject, String ip, Instant now) {
+        Instant last = lastSent.get(new Key(purpose, subject));
+        if (last != null && now.isBefore(last.plus(purpose.cooldown))) {
+            return Optional.of(Duration.between(now, last.plus(purpose.cooldown)));
+        }
+        Deque<Instant> sends = ipSends.get(new IpKey(purpose, ip));
+        if (sends != null) {
+            pruneSends(sends, now);
+            if (sends.size() >= purpose.sendsPerIpPerHour) {
+                return Optional.of(Duration.between(now, sends.peekFirst().plus(HOUR)));
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static void pruneSends(Deque<Instant> sends, Instant now) {
+        while (!sends.isEmpty() && !sends.peekFirst().isAfter(now.minus(HOUR))) {
+            sends.removeFirst();
+        }
+    }
+
+    /** Drops state that can no longer affect any decision. A full sweep is cheap at this scale. */
+    private void prune(Instant now) {
+        live.values().removeIf(c -> !now.isBefore(c.expires));
+        lastSent.entrySet().removeIf(e -> !now.isBefore(e.getValue().plus(e.getKey().purpose().cooldown)));
+        // An undo is only used right after its send; once the code it issued has expired it is stale.
+        undo.values().removeIf(u -> !now.isBefore(u.issued().issuedAt().plus(validity)));
+        ipSends.values().removeIf(sends -> {
+            pruneSends(sends, now);
+            return sends.isEmpty();
+        });
+    }
+
+    /** Number of entries held in memory; for tests. */
+    synchronized int trackedEntries() {
+        return live.size() + lastSent.size() + undo.size() + ipSends.size();
     }
 
     /**
@@ -127,7 +173,11 @@ public final class CodeService {
         }
     }
 
-    public synchronized Check verify(Purpose purpose, String subject, String code) {
+    /**
+     * Checks a code typed from {@code ip}. A wrong attempt counts toward burning the code only when it comes from
+     * the IP that requested the code, so someone else cannot burn a victim's code; it is still WRONG for them.
+     */
+    public synchronized Check verify(Purpose purpose, String subject, String code, String ip) {
         Key key = new Key(purpose, subject);
         String attempt = code == null ? "" : code;
         LiveCode liveCode = live.get(key);
@@ -142,6 +192,9 @@ public final class CodeService {
             live.remove(key);
             undo.remove(key);
             return Check.OK;
+        }
+        if (!Objects.equals(liveCode.requesterIp, ip)) {
+            return Check.WRONG;
         }
         liveCode.wrongAttempts++;
         if (liveCode.wrongAttempts >= maxAttempts) {
