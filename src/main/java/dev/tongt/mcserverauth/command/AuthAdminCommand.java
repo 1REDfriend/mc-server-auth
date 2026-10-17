@@ -74,14 +74,14 @@ public final class AuthAdminCommand implements BasicCommand {
                     sender.sendMessage(messages.get("command.usage"));
                     return;
                 }
-                async(() -> reset(sender, args[1]));
+                async(sender, () -> reset(sender, args[1]));
             }
             case "info" -> {
                 if (args.length != 2) {
                     sender.sendMessage(messages.get("command.usage"));
                     return;
                 }
-                async(() -> info(sender, args[1]));
+                async(sender, () -> info(sender, args[1]));
             }
             case "setserverpassword" -> {
                 if (sender instanceof Player player) {
@@ -93,7 +93,7 @@ public final class AuthAdminCommand implements BasicCommand {
                 } else if (args.length >= 2) {
                     String password = String.join(" ", Arrays.copyOfRange(args, 1, args.length));
                     sender.sendMessage(messages.get("command.console-password-logged"));
-                    async(() -> setServerPassword(sender, password, password));
+                    async(sender, () -> setServerPassword(sender, password, password));
                 } else {
                     sender.sendMessage(messages.get("command.usage"));
                 }
@@ -121,8 +121,15 @@ public final class AuthAdminCommand implements BasicCommand {
         return "mcserverauth.admin";
     }
 
-    private void async(Runnable task) {
-        Bukkit.getScheduler().runTaskAsynchronously(plugin, task);
+    private void async(CommandSender sender, Runnable task) {
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            try {
+                task.run();
+            } catch (RuntimeException e) {
+                logger.log(Level.SEVERE, "Unexpected error in /authadmin", e);
+                sender.sendMessage(messages.get("command.error"));
+            }
+        });
     }
 
     private void reset(CommandSender sender, String name) {
@@ -190,7 +197,26 @@ public final class AuthAdminCommand implements BasicCommand {
     }
 
     private void startServerPasswordDialog(Player player) {
-        Thread.ofVirtual().name("McServerAuth-setserverpassword").start(() -> serverPasswordDialog(player));
+        if (!waiter.claim(player.getUniqueId())) {
+            player.sendMessage(messages.get("command.dialog-open"));
+            return;
+        }
+        try {
+            Thread.ofVirtual().name("McServerAuth-setserverpassword").start(() -> {
+                try {
+                    serverPasswordDialog(player);
+                } catch (RuntimeException e) {
+                    logger.log(Level.SEVERE, "Unexpected error in /authadmin setserverpassword", e);
+                    player.closeDialog();
+                    player.sendMessage(messages.get("command.error"));
+                } finally {
+                    waiter.release(player.getUniqueId());
+                }
+            });
+        } catch (RuntimeException e) {
+            waiter.release(player.getUniqueId());
+            throw e;
+        }
     }
 
     private void serverPasswordDialog(Player player) {

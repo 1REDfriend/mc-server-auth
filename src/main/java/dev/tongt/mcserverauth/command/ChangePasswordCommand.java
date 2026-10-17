@@ -53,7 +53,22 @@ public final class ChangePasswordCommand implements BasicCommand {
             source.getSender().sendMessage(messages.get("command.players-only"));
             return;
         }
-        Thread.ofVirtual().name("McServerAuth-changepassword").start(() -> run(player));
+        if (!waiter.claim(player.getUniqueId())) {
+            player.sendMessage(messages.get("command.dialog-open"));
+            return;
+        }
+        try {
+            Thread.ofVirtual().name("McServerAuth-changepassword").start(() -> {
+                try {
+                    run(player);
+                } finally {
+                    waiter.release(player.getUniqueId());
+                }
+            });
+        } catch (RuntimeException e) {
+            waiter.release(player.getUniqueId());
+            throw e;
+        }
     }
 
     @Override
@@ -106,6 +121,10 @@ public final class ChangePasswordCommand implements BasicCommand {
             player.closeDialog();
         } catch (SQLException e) {
             logger.log(Level.SEVERE, "Database error in /changepassword for " + player.getName(), e);
+            player.closeDialog();
+            player.sendMessage(messages.get("command.error"));
+        } catch (RuntimeException e) {
+            logger.log(Level.SEVERE, "Unexpected error in /changepassword for " + player.getName(), e);
             player.closeDialog();
             player.sendMessage(messages.get("command.error"));
         }
