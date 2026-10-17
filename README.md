@@ -32,7 +32,9 @@ server needs no internet access to load it.
 .\gradlew.bat build
 .\scripts\start-test-server.ps1
 ```
-The first run downloads Paper and stops until you accept the Minecraft EULA in `run\eula.txt`.
+`start-mailpit.ps1` needs no Docker: on first run it downloads the official Mailpit Windows build
+(checksum-verified) into `tools\mailpit` and starts it minimized; close that window to stop it.
+The first run of `start-test-server.ps1` downloads Paper and stops until you accept the Minecraft EULA in `run\eula.txt`.
 Connect with an offline launcher to `127.0.0.1:34127`. Emails appear at http://127.0.0.1:41854.
 The generated server password is printed once in the server console.
 
