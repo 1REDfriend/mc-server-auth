@@ -36,8 +36,11 @@ if (-not (Test-Path $config)) {
     Copy-Item (Join-Path $root 'dev\test-config.yml') $config
 }
 
-$built = Get-ChildItem (Join-Path $root 'build\libs') -Filter 'mc-server-auth-*.jar' | Select-Object -First 1
-if (-not $built) { throw 'Plugin jar not found. Run .\gradlew.bat build first.' }
+$jars = @(Get-ChildItem (Join-Path $root 'build\libs') -Filter 'mc-server-auth-*.jar' -ErrorAction SilentlyContinue)
+if ($jars.Count -ne 1) {
+    throw "Expected exactly one mc-server-auth-*.jar in build\libs but found $($jars.Count). Remove stale jars and run .\gradlew.bat build."
+}
+$built = $jars[0]
 Copy-Item $built.FullName (Join-Path $run 'plugins\McServerAuth.jar') -Force
 
 Push-Location $run
