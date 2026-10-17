@@ -11,6 +11,9 @@ public final class PasswordHasher {
     private final int cost;
 
     public PasswordHasher(int cost) {
+        if (cost < 4 || cost > 31) {
+            throw new IllegalArgumentException("BCrypt cost must be between 4 and 31");
+        }
         this.cost = cost;
     }
 
@@ -19,6 +22,9 @@ public final class PasswordHasher {
     }
 
     public boolean verify(String password, String hash) {
+        if (hash == null || hash.isEmpty()) {
+            return false;
+        }
         if (password.getBytes(StandardCharsets.UTF_8).length > MAX_BYTES) {
             return false;
         }

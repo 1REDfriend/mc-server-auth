@@ -38,9 +38,20 @@ public record AuthConfig(
         if (maxLength > 64) {
             throw new IllegalArgumentException("password.max-length must be 64 or less");
         }
+        int smtpPort = positive(c, "email.smtp.port");
+        if (smtpPort > 65535) {
+            throw new IllegalArgumentException("email.smtp.port must be 65535 or less");
+        }
+        boolean rememberEnabled = false;
+        if (c.contains("session-remember.enabled")) {
+            if (!c.isBoolean("session-remember.enabled")) {
+                throw new IllegalArgumentException("session-remember.enabled must be true or false");
+            }
+            rememberEnabled = c.getBoolean("session-remember.enabled");
+        }
         Smtp smtp = new Smtp(
                 c.getString("email.smtp.host", "").trim(),
-                positive(c, "email.smtp.port"),
+                smtpPort,
                 security(c.getString("email.smtp.security", "starttls")),
                 c.getString("email.smtp.username", ""),
                 c.getString("email.smtp.password", ""),
@@ -54,7 +65,7 @@ public record AuthConfig(
                 minutes(c, "code-wait-timeout-minutes"),
                 minLength,
                 maxLength,
-                c.getBoolean("session-remember.enabled", false),
+                rememberEnabled,
                 minutes(c, "session-remember.minutes"),
                 positive(c, "email.max-accounts-per-email"),
                 minutes(c, "email.code-valid-minutes"),

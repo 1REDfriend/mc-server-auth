@@ -32,6 +32,19 @@ class PasswordHasherTest {
     }
 
     @Test
+    void nullOrEmptyHashIsRejectedWithoutThrowing() {
+        assertFalse(hasher.verify("secret123", null));
+        assertFalse(hasher.verify("secret123", ""));
+    }
+
+    @Test
+    void costOutsideBcryptRangeIsRejected() {
+        assertThrows(IllegalArgumentException.class, () -> new PasswordHasher(3));
+        assertThrows(IllegalArgumentException.class, () -> new PasswordHasher(32));
+        assertDoesNotThrow(() -> new PasswordHasher(4));
+    }
+
+    @Test
     void malformedHashIsRejectedWithoutThrowing() {
         assertFalse(hasher.verify("secret123", "not-a-hash"));
     }

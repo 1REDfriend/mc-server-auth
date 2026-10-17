@@ -24,6 +24,11 @@ class AuthConfigTest {
         assertEquals(3, config.maxAttemptsPerConnection());
         assertEquals(5, config.ipBanFailures());
         assertEquals(Duration.ofMinutes(10), config.ipBanWindow());
+        assertEquals(Duration.ofMinutes(10), config.ipBanDuration());
+        assertEquals(3, config.maxAccountsPerEmail());
+        assertEquals(5, config.codeMaxAttempts());
+        assertEquals(587, config.smtp().port());
+        assertEquals(Duration.ofMinutes(5), config.sessionRememberDuration());
         assertEquals(Duration.ofSeconds(60), config.loginTimeout());
         assertEquals(Duration.ofMinutes(10), config.codeWaitTimeout());
         assertEquals(6, config.passwordMinLength());
@@ -49,6 +54,31 @@ class AuthConfigTest {
         yaml.set("max-attempts-per-connection", 0);
         var e = assertThrows(IllegalArgumentException.class, () -> AuthConfig.from(yaml));
         assertTrue(e.getMessage().contains("max-attempts-per-connection"));
+    }
+
+    @Test
+    void rejectsNonBooleanSessionRememberEnabled() {
+        YamlConfiguration yaml = defaults();
+        yaml.set("session-remember.enabled", "yes please");
+        var e = assertThrows(IllegalArgumentException.class, () -> AuthConfig.from(yaml));
+        assertTrue(e.getMessage().contains("session-remember.enabled"));
+    }
+
+    @Test
+    void acceptsBooleanSessionRememberEnabled() {
+        YamlConfiguration yaml = defaults();
+        yaml.set("session-remember.enabled", true);
+        assertTrue(AuthConfig.from(yaml).sessionRememberEnabled());
+    }
+
+    @Test
+    void rejectsSmtpPortAbove65535() {
+        YamlConfiguration yaml = defaults();
+        yaml.set("email.smtp.port", 65536);
+        var e = assertThrows(IllegalArgumentException.class, () -> AuthConfig.from(yaml));
+        assertTrue(e.getMessage().contains("email.smtp.port"));
+        yaml.set("email.smtp.port", 65535);
+        assertEquals(65535, AuthConfig.from(yaml).smtp().port());
     }
 
     @Test
