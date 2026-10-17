@@ -148,6 +148,9 @@ public final class LoginFlow implements Listener {
         } catch (SQLException e) {
             logger.log(Level.SEVERE, "Database error while logging in " + name, e);
             connection.disconnect(messages.get("kick.unavailable"));
+        } catch (RuntimeException e) {
+            logger.log(Level.SEVERE, "Unexpected error while logging in " + name, e);
+            connection.disconnect(messages.get("kick.unavailable"));
         } finally {
             inFlight.remove(key);
             waiter.cancel(id);
