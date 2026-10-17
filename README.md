@@ -28,6 +28,7 @@ Players also verify an **email address**, which lets them **reset a forgotten pa
 - [FAQ](#faq)
 - [Building from source](#building-from-source)
 - [Local test server](#local-test-server)
+- [Support](#support)
 - [License](#license)
 
 ## Features
@@ -217,6 +218,12 @@ Windows PowerShell scripts set up a throwaway test environment on your machine:
 | 41854 | Mailpit web inbox |
 
 Design notes and the implementation plan are in [`docs/superpowers/`](docs/superpowers/).
+
+## Support
+
+If McServerAuth keeps impostors off your offline-mode server, you can [buy me a coffee](https://buymeacoffee.com/tongtongkok).
+
+<a href="https://buymeacoffee.com/tongtongkok"><img width="200" height="200" alt="Buy Me a Coffee QR code" src="https://github.com/user-attachments/assets/4034910a-9019-498d-a3e7-85d96b789e5e" /></a>
 
 ## License
 
