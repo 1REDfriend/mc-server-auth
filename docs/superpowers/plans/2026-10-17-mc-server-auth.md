@@ -1113,7 +1113,7 @@ class CodeServiceTest {
     void registerCooldownThenNewCodeReplacesOld() {
         String first = issue(Purpose.REGISTER, "steve");
         CoolingDown wait = assertInstanceOf(CoolingDown.class, codes.issue(Purpose.REGISTER, "steve", IP));
-        assertEquals(Duration.ofSeconds(60), wait.wait());
+        assertEquals(Duration.ofSeconds(60), wait.remaining());
         clock.advance(Duration.ofSeconds(60));
         String second = issue(Purpose.REGISTER, "steve");
         if (!first.equals(second)) {
@@ -1126,7 +1126,7 @@ class CodeServiceTest {
     void resetCooldownIsFifteenMinutes() {
         issue(Purpose.RESET, "steve");
         CoolingDown wait = assertInstanceOf(CoolingDown.class, codes.issue(Purpose.RESET, "steve", IP));
-        assertEquals(Duration.ofMinutes(15), wait.wait());
+        assertEquals(Duration.ofMinutes(15), wait.remaining());
     }
 
     @Test
@@ -1201,7 +1201,7 @@ public final class CodeService {
 
     public record Issued(String code) implements Issue {}
 
-    public record CoolingDown(Duration wait) implements Issue {}
+    public record CoolingDown(Duration remaining) implements Issue {}
 
     /** OK: accepted and consumed. WRONG: try again. BURNED: this attempt used up the code. NONE: no live code. */
     public enum Check { OK, WRONG, BURNED, NONE }
@@ -2695,7 +2695,7 @@ public final class LoginFlow implements Listener {
         String ip = s.ip.getHostAddress();
         CodeService.Issue issue = codes.issue(purpose, s.key, ip);
         if (issue instanceof CodeService.CoolingDown wait) {
-            long seconds = Math.max(1, (wait.wait().toMillis() + 999) / 1000);
+            long seconds = Math.max(1, (wait.remaining().toMillis() + 999) / 1000);
             return messages.get("error.code-cooldown", Placeholder.unparsed("seconds", Long.toString(seconds)));
         }
         String code = ((CodeService.Issued) issue).code();
