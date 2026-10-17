@@ -28,7 +28,7 @@ if (-not ((Test-Path $eula) -and (Select-String -Path $eula -Pattern '^eula=true
 
 $props = Join-Path $run 'server.properties'
 if (-not (Test-Path $props)) {
-    Set-Content $props @('online-mode=false', 'server-port=34127', 'server-ip=127.0.0.1', 'motd=mc-server-auth test')
+    Set-Content $props @('online-mode=false', 'white-list=false', 'server-port=34127', 'server-ip=127.0.0.1', 'motd=mc-server-auth test')
 }
 
 $config = Join-Path $pluginData 'config.yml'
