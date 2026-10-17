@@ -1,0 +1,25 @@
+# Local test only. Points SMTP at Mailpit (scripts/start-mailpit.ps1); nothing leaves this machine.
+max-attempts-per-connection: 3
+ip-ban:
+  failures: 5
+  window-minutes: 10
+  ban-minutes: 10
+login-timeout-seconds: 60
+code-wait-timeout-minutes: 10
+password:
+  min-length: 6
+  max-length: 64
+session-remember:
+  enabled: false
+  minutes: 5
+email:
+  max-accounts-per-email: 3
+  code-valid-minutes: 15
+  code-max-attempts: 5
+  smtp:
+    host: "127.0.0.1"
+    port: 41853
+    security: none
+    username: ""
+    password: ""
+    from: "Test Server <noreply@mc-server-auth.test>"
