@@ -84,12 +84,16 @@ public final class AuthAdminCommand implements BasicCommand {
                 async(() -> info(sender, args[1]));
             }
             case "setserverpassword" -> {
-                if (args.length >= 2) {
+                if (sender instanceof Player player) {
+                    // A player never gets the argument form: whatever they typed is already in the server log.
+                    if (args.length >= 2) {
+                        player.sendMessage(messages.get("command.password-arg-ignored"));
+                    }
+                    startServerPasswordDialog(player);
+                } else if (args.length >= 2) {
                     String password = String.join(" ", Arrays.copyOfRange(args, 1, args.length));
                     sender.sendMessage(messages.get("command.console-password-logged"));
                     async(() -> setServerPassword(sender, password, password));
-                } else if (sender instanceof Player player) {
-                    Thread.ofVirtual().name("McServerAuth-setserverpassword").start(() -> serverPasswordDialog(player));
                 } else {
                     sender.sendMessage(messages.get("command.usage"));
                 }
@@ -183,6 +187,10 @@ public final class AuthAdminCommand implements BasicCommand {
             sender.sendMessage(error);
             return error;
         }
+    }
+
+    private void startServerPasswordDialog(Player player) {
+        Thread.ofVirtual().name("McServerAuth-setserverpassword").start(() -> serverPasswordDialog(player));
     }
 
     private void serverPasswordDialog(Player player) {

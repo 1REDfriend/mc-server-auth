@@ -17,6 +17,7 @@ import org.jspecify.annotations.Nullable;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -73,6 +74,18 @@ public final class DialogWaiter implements Listener {
     }
 
     private final Map<Object, CompletableFuture<Response>> pending = new ConcurrentHashMap<>();
+
+    private final Set<UUID> claimed = ConcurrentHashMap.newKeySet();
+
+    /** Marks a player as having a command dialog open. Returns false if one already is. */
+    public boolean claim(UUID playerId) {
+        return claimed.add(playerId);
+    }
+
+    /** Releases a {@link #claim(UUID)}; call it in a finally block. */
+    public void release(UUID playerId) {
+        claimed.remove(playerId);
+    }
 
     /** Wait key for a dialog shown during the configuration phase. */
     public static Object keyOf(PlayerConfigurationConnection connection) {

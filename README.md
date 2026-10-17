@@ -48,7 +48,7 @@ The generated server password is printed once in the server console.
 |---|---|---|
 | `/changepassword` | `mcserverauth.changepassword` | everyone |
 | `/authadmin reset <name>` | `mcserverauth.admin` | op |
-| `/authadmin setserverpassword [password]` | `mcserverauth.admin` | op |
+| `/authadmin setserverpassword` (players: opens a dialog) / `setserverpassword <password>` (console only) | `mcserverauth.admin` | op |
 | `/authadmin info <name>` | `mcserverauth.admin` | op |
 
 ## Tell your players

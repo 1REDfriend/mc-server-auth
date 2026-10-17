@@ -80,6 +80,8 @@ command:
   no-such-account: "<red>No account named <name>."
   server-password-set: "<green>Server password changed. It applies to new logins."
   console-password-logged: "<yellow>Warning: the server log records this command, including the password."
+  password-arg-ignored: "<yellow>The password you typed was ignored and may be in the server log. Choose a different one in the dialog."
+  dialog-open: "<red>Finish or cancel the open dialog first."
   info: "<gray>Name: <white><name></white> | Email: <white><email></white> | Created: <white><created></white> | Last login: <white><last_login></white> | Last IP: <white><last_ip></white>"
   error: "<red>Something went wrong. See the server log."
 email:
