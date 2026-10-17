@@ -1,0 +1,26 @@
+# Failed password attempts allowed per connection before the player is disconnected.
+max-attempts-per-connection: 3
+ip-ban:
+  failures: 5          # failures from one IP ...
+  window-minutes: 10   # ... within this window
+  ban-minutes: 10      # result in a temporary ban
+login-timeout-seconds: 60
+# How long a dialog that waits for an emailed code stays open.
+code-wait-timeout-minutes: 10
+password:
+  min-length: 6
+  max-length: 64
+session-remember:
+  enabled: false       # skip dialogs on reconnect from the same IP
+  minutes: 5
+email:
+  max-accounts-per-email: 3
+  code-valid-minutes: 15
+  code-max-attempts: 5
+  smtp:
+    host: ""           # e.g. smtp.gmail.com; blank disables registration and reset
+    port: 587
+    security: starttls # starttls | ssl | none (none only for a local test mail server)
+    username: ""
+    password: ""       # app password; never commit a real one
+    from: ""           # e.g. "My Server <noreply@example.com>"
