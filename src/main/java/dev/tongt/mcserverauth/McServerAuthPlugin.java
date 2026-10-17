@@ -35,6 +35,7 @@ public final class McServerAuthPlugin extends JavaPlugin {
 
     private AccountStore store;
     private MailSender mail;
+    private DialogWaiter waiter;
 
     @Override
     public void onEnable() {
@@ -78,7 +79,7 @@ public final class McServerAuthPlugin extends JavaPlugin {
             getLogger().warning("SMTP is not configured (email.smtp in config.yml). New registrations and password resets are refused.");
         }
 
-        DialogWaiter waiter = new DialogWaiter();
+        waiter = new DialogWaiter();
         DialogFactory dialogs = new DialogFactory(messages, config.passwordMaxLength());
         LoginFlow flow = new LoginFlow(config, messages, dialogs, waiter, store, hasher, rules, limiter,
                 sessions, codes, mail, clock, getLogger());
@@ -96,6 +97,9 @@ public final class McServerAuthPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        if (waiter != null) {
+            waiter.cancelAll();
+        }
         if (mail != null) {
             mail.close();
         }

@@ -67,7 +67,7 @@ public final class ChangePasswordCommand implements BasicCommand {
         try {
             while (true) {
                 Dialog dialog = dialogs.changePassword(error);
-                Response r = waiter.await(player.getUniqueId(), () -> player.showDialog(dialog), config.loginTimeout());
+                Response r = waiter.await(DialogWaiter.keyOf(player), () -> player.showDialog(dialog), config.loginTimeout());
                 if (!r.is(DialogFactory.SUBMIT)) {
                     player.closeDialog();
                     return;

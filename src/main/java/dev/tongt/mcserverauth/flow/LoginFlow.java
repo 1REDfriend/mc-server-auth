@@ -64,7 +64,7 @@ public final class LoginFlow implements Listener {
     /** Per-connection state. */
     private static final class Session {
         final PlayerConfigurationConnection connection;
-        final UUID id;
+        final Object waitKey;
         final String name;
         final String key;
         final InetAddress ip;
@@ -72,9 +72,9 @@ public final class LoginFlow implements Listener {
         int failures;
         int registerSends;
 
-        Session(PlayerConfigurationConnection connection, UUID id, String name, InetAddress ip, Instant deadline) {
+        Session(PlayerConfigurationConnection connection, String name, InetAddress ip, Instant deadline) {
             this.connection = connection;
-            this.id = id;
+            this.waitKey = DialogWaiter.keyOf(connection);
             this.name = name;
             this.key = AccountStore.key(name);
             this.ip = ip;
@@ -155,7 +155,7 @@ public final class LoginFlow implements Listener {
             return;
         }
         try {
-            Session session = new Session(connection, id, name, connection.getClientAddress().getAddress(),
+            Session session = new Session(connection, name,connection.getClientAddress().getAddress(),
                     clock.instant().plus(config.loginTimeout()));
             Component denial = run(session);
             if (denial != null) {
@@ -182,7 +182,6 @@ public final class LoginFlow implements Listener {
             }
         } finally {
             inFlight.remove(key);
-            waiter.cancel(id);
         }
     }
 
@@ -452,12 +451,12 @@ public final class LoginFlow implements Listener {
         if (left.isNegative() || left.isZero()) {
             throw new TimeoutException();
         }
-        return waiter.await(s.id, () -> s.connection.getAudience().showDialog(dialog), left);
+        return waiter.await(s.waitKey, () -> s.connection.getAudience().showDialog(dialog), left);
     }
 
     /** Code dialogs get the longer email wait; afterwards the player gets a fresh login timeout. */
     private Response promptCode(Session s, Dialog dialog) throws TimeoutException {
-        Response response = waiter.await(s.id, () -> s.connection.getAudience().showDialog(dialog), config.codeWaitTimeout());
+        Response response = waiter.await(s.waitKey, () -> s.connection.getAudience().showDialog(dialog), config.codeWaitTimeout());
         s.deadline = clock.instant().plus(config.loginTimeout());
         return response;
     }

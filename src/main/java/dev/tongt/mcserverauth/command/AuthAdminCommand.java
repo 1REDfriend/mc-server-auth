@@ -190,7 +190,7 @@ public final class AuthAdminCommand implements BasicCommand {
         try {
             while (true) {
                 Dialog dialog = dialogs.newPassword("dialog.set-server-password.title", error, true);
-                Response r = waiter.await(player.getUniqueId(), () -> player.showDialog(dialog), config.loginTimeout());
+                Response r = waiter.await(DialogWaiter.keyOf(player), () -> player.showDialog(dialog), config.loginTimeout());
                 if (!r.is(DialogFactory.SUBMIT)) {
                     player.closeDialog();
                     return;
