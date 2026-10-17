@@ -11,6 +11,9 @@ short server-password timeout against name lockout, wrong codes count against th
 and only the requesting IP can burn a code, queued mail is withdrawn instead of
 cancelled, cheap checks before bcrypt with a submit cap, dialog click nonces, memory
 pruning, config upper bounds, session-remember caveats.
+Revision 5 (review fixes): foreign wrong-code guesses are capped per code, IPv6 limits
+group by /64, a timeout or cancel at the login dialog or Forgot menu costs the IP a
+failure, and the session cache ignores logins that started before a `clear()`.
 
 ## Goal
 
@@ -196,12 +199,19 @@ can choose **Forgot password?** → **I already have a code** to go straight to 
 
 Failures of the server password and the personal password share one
 per-connection counter, kept by `LoginFlow` per connection (`max-attempts-per-connection`).
-Every failure, every wrong code, and a timeout or cancel of the server-password dialog
-also counts against the IP in `AttemptLimiter` (`ip-ban`). Wrong codes do not count
+Every failure, every wrong code, and a timeout, close or cancel of the server-password
+dialog, of dialog 2b (login) or of the Forgot menu also counts against the IP in
+`AttemptLimiter` (`ip-ban`), so idling there cannot hold a name for free. Wrong codes do not count
 toward the per-connection password counter; they have their own per-code counter
 (see Codes).
 
-At most 2 connections from one IP can be in the login flow at once.
+At most 2 connections from one IP can be in the login flow at once. A third person behind
+the same NAT waits briefly until a slot frees. Proxies (forwarded client addresses) are out
+of scope: the limits use the address Paper reports.
+
+All IP-keyed limits (`AttemptLimiter`, the in-flight cap, code send limits and the
+requester-IP check) use `IpKey`: IPv4 as-is, IPv6 grouped by its /64 prefix, so rotating
+addresses inside one subscriber's /64 does not evade them.
 
 ## Verification and reset codes
 
@@ -215,6 +225,10 @@ At most 2 connections from one IP can be in the login flow at once.
   someone who knows the server password cannot burn a victim's reset code and lock
   them out with the 15-minute reset cooldown. Every wrong code still counts against
   the typing IP's limiter.
+- Wrong guesses from other IPs are counted per code (`foreignWrong`). At
+  `3 * code-max-attempts` the code becomes requester-only: any other IP gets "wrong"
+  without the hash being checked, even for the correct code, so an attacker with many
+  IPs cannot brute-force the 6 digits. The requesting IP can still use the code.
 - At most one live code per account and purpose (`REGISTER`, `RESET`). A new code
   replaces the old one.
 - Kept in memory; a server restart invalidates all codes (acceptable). Each issue
@@ -249,7 +263,7 @@ Each unit has one job and can be tested on its own. Package root:
 | `PasswordHasher` | `hash(String)` and `verify(String, hash)` using BCrypt (cost 12). | `at.favre.lib:bcrypt`, shaded and relocated to `dev.tongt.mcserverauth.lib.favre` |
 | `AccountStore` | SQLite access: find account, create, update password, delete (reset), count accounts per email, read/write the server password hash. Keyed by lowercase name; keeps the original-case name. Runs off the main thread. | sqlite-jdbc (bundled with Paper) |
 | `AttemptLimiter` | Per-IP failure window and temporary IP bans. In-memory; prunes empty windows and expired bans on each failure. (The per-connection count lives in `LoginFlow`.) | Clock (injectable for tests) |
-| `SessionCache` | Remembers `(name, IP) → authenticated at`; feature C, **off by default**. In-memory. `clear()` on server-password change. | Clock |
+| `SessionCache` | Remembers `(name, IP) → authenticated at`; feature C, **off by default**. In-memory. `clear()` on server-password change bumps a generation; `remember` only stores if the generation captured after the server password was verified is still current, so a login in flight during a change is not remembered. | Clock |
 | `EmailAddress` | Validate format and length; normalize (trim, lowercase domain); produce the masked form. Pure, no I/O. | — |
 | `CodeService` | Issue, verify and burn codes per (account, purpose); enforce expiry, attempts and send limits. In-memory. | Clock, `SecureRandom` |
 | `MailSender` | Send one plain-text email over SMTP (STARTTLS or SSL) on a background thread (3 threads, queue of 50; a full queue fails the send). Returns a `Sending` handle: a future plus `withdraw()`, which stops a still-queued email from ever being sent. Interface + SMTP implementation. | Jakarta Mail (Eclipse Angus), shaded, not relocated |
@@ -442,11 +456,12 @@ Automated (JUnit 5, no running server):
 - `AttemptLimiter` with a fake clock: IP window, ban expiry, pruning of stale
   addresses.
 - `SessionCache` with a fake clock: disabled returns nothing, enabled expires,
-  `clear()` forgets everyone.
+  `clear()` forgets everyone, a stale generation is not remembered.
+- `IpKey`: IPv4 unchanged, IPv6 in one /64 equal, different /64 differ.
 - `EmailAddress`: valid / invalid formats, length limit, normalization, masking.
 - `CodeService` with a fake clock: correct code accepted once, wrong attempts burn
   the code, expiry, new code replaces old, send-limit cooldowns per account and IP,
-  wrong attempts from another IP never burn a code, `cooldownRemaining` issues
+  wrong attempts from another IP never burn a code, the foreign-guess cap makes a code requester-only, `cooldownRemaining` issues
   nothing, expired state is pruned.
 - `SmtpMailSender`: bad recipients refused, unreachable server fails, a full queue
   fails the send, a queued send can be withdrawn and never runs.
