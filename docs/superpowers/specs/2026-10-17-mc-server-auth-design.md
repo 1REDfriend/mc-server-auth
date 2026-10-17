@@ -2,6 +2,7 @@
 
 Date: 2026-10-17
 Status: approved in chat, pending spec review
+Revision 2: added email verification and self-service password reset by emailed code.
 
 ## Goal
 
@@ -12,7 +13,11 @@ join with TLauncher or other non-premium launchers) with two password layers:
 2. **Personal password** — set by each player on their first join, required on every
    later join, so nobody can play under someone else's username.
 
-Both prompts appear as native Minecraft dialogs **during the configuration phase**,
+Each player also registers a **verified email address**. A player who forgets
+their personal password can reset it themselves with a 6-digit code sent to that
+email.
+
+All prompts appear as native Minecraft dialogs **during the configuration phase**,
 before the player enters the world. A player who fails never sees the world.
 
 No client mod is needed. The plugin runs only on the server.
@@ -21,14 +26,17 @@ No client mod is needed. The plugin runs only on the server.
 
 - Premium (Mojang) account verification.
 - Multi-server / proxy (Velocity, BungeeCord) support.
-- Email-based password recovery. Recovery is an admin reset.
+- Reset **links** in emails. That would need a public web server, port forwarding and
+  HTTPS. The emailed code is typed into an in-game dialog instead.
+- Changing the registered email from in-game. A player who loses access to their
+  email asks an admin for `/authadmin reset`, then registers again.
 - Masked password input. Minecraft dialog text inputs do not mask characters; this is
   a game limitation and is documented for players.
 
 ## Known limitations (to tell server owners and players)
 
-- Offline mode disables protocol encryption, so passwords travel in plaintext over the
-  network. Players must not reuse a password from any other account.
+- Offline mode disables protocol encryption, so passwords and codes travel in
+  plaintext over the network. Players must not reuse a password from any other account.
 - Dialog input is visible on screen while typing.
 
 ## Environment
@@ -36,8 +44,10 @@ No client mod is needed. The plugin runs only on the server.
 - Paper 26.3 (confirmed available on the PaperMC download API on 2026-10-17).
 - Java 25 (installed locally: OpenJDK 25.0.3).
 - Gradle (Kotlin DSL), depends on `paper-api` 26.3.
-- Test server runs locally in `run/` (git-ignored) on port **34127**
-  (random high port, per the owner's port rule). Recorded in `README.md`.
+- Test server runs locally in `run/` (git-ignored) on port **34127**.
+- Local fake mail server for testing: Mailpit (catches all mail, sends nothing out):
+  SMTP on **41853**, web inbox on **41854**.
+- Ports follow the owner's random-high-port rule and are recorded in `README.md`.
 
 ## Login flow
 
@@ -58,24 +68,91 @@ Configuration phase (player is not in the world yet)
   │                                         → allow, skip dialogs
   │
   ├─ Dialog 1: server password
-  │     wrong → count failure; under limit → show dialog again; at limit → disconnect
+  │     wrong → count failure; under limit → show again; at limit → disconnect
   │
   ├─ Account exists?
-  │     no  → Dialog 2a: new password + confirm
-  │            rules: 6–64 chars, both fields equal, not equal to the server password
-  │            invalid → show 2a again with the reason
-  │            valid   → store hash, continue
-  │     yes → Dialog 2b: personal password
-  │            wrong → count failure; same limit rules as dialog 1
+  │
+  │   no ─► Dialog 2a: register
+  │           fields: new password, confirm password, email
+  │           rules: password 6–64 chars, both equal, not equal to the server
+  │                  password; email valid format, ≤ 254 chars, used by fewer
+  │                  than `max-accounts-per-email` accounts
+  │           invalid → show 2a again with the reason
+  │           valid   → send verification code to the email
+  │         Dialog 2a-verify: "Code sent to t***@gmail.com"
+  │           buttons: Confirm, Resend (after cooldown), Cancel
+  │           correct code → store account (password hash + email), continue
+  │           wrong code   → code attempt counter (see Codes)
+  │
+  │   yes ─► Dialog 2b: personal password
+  │           buttons: Log in, Forgot password?, Cancel
+  │           wrong → count failure; same limit rules as dialog 1
+  │           Forgot password? → reset flow below
   │
   ▼
 Configuration completes → player enters the world
 ```
 
-Every dialog wait has a timeout (default 60 s, whole flow). Timeout, closing the
-dialog, or pressing a cancel button disconnects the player with a message.
+### Reset flow (from dialog 2b)
 
-Failures from dialog 1 and dialog 2b share one per-connection counter.
+```
+Forgot password?
+  │
+  ├─ Reset cooldown for this account or IP active?
+  │      → show "A code was sent recently, try again in N minutes",
+  │        return to dialog 2b
+  │
+  ├─ Send reset code to the account's email
+  │
+  ▼
+Dialog R1: "Code sent to t***@gmail.com"  — enter the 6-digit code
+  │   wrong → code attempt counter; code burned → back to dialog 2b
+  ▼
+Dialog R2: new password + confirm (same rules as 2a)
+  │
+  ▼
+Store new hash, clear the account's session-cache entries → player enters the world
+```
+
+The reset does not need the player to stay connected: if they disconnect, the code
+stays valid until it expires, and on the next join (after the server password) they
+can choose **Forgot password?** → **I already have a code** to go straight to R1.
+
+### Timeouts
+
+- Whole flow: 60 s by default.
+- While a dialog that waits for an emailed code is open (2a-verify, R1): 10 minutes.
+- Timeout, closing the dialog, or Cancel → disconnect with a message.
+
+Failures of the server password and the personal password share one
+per-connection counter. Wrong codes have their own counter (see Codes).
+
+## Verification and reset codes
+
+- 6 random digits from `SecureRandom`.
+- Stored only as a hash (SHA-256 with a per-code salt is enough: the code is short-
+  lived and attempt-limited), never logged.
+- Valid for 15 minutes, single use.
+- 5 wrong attempts burn the code; the player must request a new one.
+- At most one live code per account and purpose (`REGISTER`, `RESET`). A new code
+  replaces the old one.
+- Kept in memory; a server restart invalidates all codes (acceptable).
+
+### Send limits (anti-spam)
+
+| Purpose | Per account / pending registration | Per IP |
+|---|---|---|
+| Register (resend) | 60 s between sends, max 3 per connection | 5 per hour |
+| Reset | 1 per 15 min | 3 per hour |
+
+Someone abusing **Forgot password?** on another player's name only causes a code to be
+sent to the real owner's inbox; the limits stop that from becoming spam.
+
+### Email masking
+
+Shown as first character + `***` + `@` + full domain, e.g. `t***@gmail.com`. The full
+address is never shown in game or in command output except to admins
+(`/authadmin info <name>`).
 
 ## Components
 
@@ -85,15 +162,18 @@ Each unit has one job and can be tested on its own. Package root:
 | Unit | Responsibility | Depends on |
 |---|---|---|
 | `AuthConfig` | Load and validate `config.yml` into an immutable object. | Bukkit config API |
-| `Messages` | Load `messages.yml`; return player-facing text (MiniMessage) by key with placeholders. | Adventure |
+| `Messages` | Load `messages.yml`; return player-facing text (MiniMessage) and email subject/body templates by key with placeholders. | Adventure |
 | `PasswordHasher` | `hash(String)` and `verify(String, hash)` using BCrypt (cost 12). Shaded library. | jBCrypt (or equivalent) |
-| `AccountStore` | SQLite access: find account, create, update password, delete (reset), read/write the server password hash. Keyed by lowercase name; keeps the original-case name. Runs off the main thread. | sqlite-jdbc (bundled with Paper) |
+| `AccountStore` | SQLite access: find account, create, update password, delete (reset), count accounts per email, read/write the server password hash. Keyed by lowercase name; keeps the original-case name. Runs off the main thread. | sqlite-jdbc (bundled with Paper) |
 | `AttemptLimiter` | Per-connection failure count, per-IP failure window, temporary IP bans. In-memory. | Clock (injectable for tests) |
-| `SessionCache` | Remembers `(name, IP) → authenticated at`; feature C, **off by default**. In-memory, lost on restart. | Clock |
-| `LoginFlow` | Drives the dialogs in the configuration phase following the flow above. Holds no storage logic itself. | all of the above, Paper dialog API |
+| `SessionCache` | Remembers `(name, IP) → authenticated at`; feature C, **off by default**. In-memory. | Clock |
+| `EmailAddress` | Validate format and length; normalize (trim, lowercase domain); produce the masked form. Pure, no I/O. | — |
+| `CodeService` | Issue, verify and burn codes per (account, purpose); enforce expiry, attempts and send limits. In-memory. | Clock, `SecureRandom` |
+| `MailSender` | Send one plain-text email over SMTP (STARTTLS or SSL) on a background thread; returns a future. Interface + SMTP implementation, so tests use a fake. | Jakarta Mail (Eclipse Angus), shaded |
+| `LoginFlow` | Drives the dialogs in the configuration phase following the flows above. Holds no storage or mail logic itself. | all of the above, Paper dialog API |
 | `PreLoginGuard` | The pre-login checks (ban, duplicate online name, case mismatch). | `AccountStore`, `AttemptLimiter` |
-| `ChangePasswordCommand` | `/changepassword` (feature A): opens a dialog with current, new, confirm. | `LoginFlow` dialog builders, `AccountStore`, `PasswordHasher` |
-| `AuthAdminCommand` | `/authadmin reset <name>` and `/authadmin setserverpassword` (feature B). | `AccountStore`, `PasswordHasher` |
+| `ChangePasswordCommand` | `/changepassword` (feature A): dialog with current, new, confirm. | dialog builders, `AccountStore`, `PasswordHasher` |
+| `AuthAdminCommand` | `/authadmin reset <name>`, `/authadmin setserverpassword`, `/authadmin info <name>` (feature B). | `AccountStore`, `PasswordHasher` |
 | `McServerAuthPlugin` | Wires everything, registers listeners and commands, closes the database on disable. | everything |
 
 ### Paper API used
@@ -116,10 +196,12 @@ CREATE TABLE accounts (
   name_lower    TEXT PRIMARY KEY,
   name_display  TEXT NOT NULL,
   password_hash TEXT NOT NULL,
+  email         TEXT NOT NULL,      -- verified before the row is created
   created_at    INTEGER NOT NULL,   -- epoch millis
   last_login_at INTEGER,
   last_ip       TEXT
 );
+CREATE INDEX accounts_email ON accounts(email);
 
 CREATE TABLE settings (
   key   TEXT PRIMARY KEY,
@@ -128,7 +210,8 @@ CREATE TABLE settings (
 -- settings row: ('server_password_hash', <bcrypt hash>)
 ```
 
-Plaintext passwords are never stored or logged.
+An account row is created only after the email is verified, so every stored email
+is verified. Plaintext passwords and codes are never stored or logged.
 
 ### Server password bootstrap
 
@@ -146,8 +229,9 @@ Plaintext passwords are never stored or logged.
 | Command | Who | Permission | Notes |
 |---|---|---|---|
 | `/changepassword` | player | `mcserverauth.changepassword` (default: true) | dialog: current, new, confirm |
-| `/authadmin reset <name>` | admin / console | `mcserverauth.admin` (default: op) | deletes the account; next join goes to dialog 2a. Kicks the player if online. Clears their session cache entry. |
+| `/authadmin reset <name>` | admin / console | `mcserverauth.admin` (default: op) | deletes the account (password and email); next join registers again. Kicks the player if online. Clears their session-cache entries and live codes. |
 | `/authadmin setserverpassword` | admin / console | `mcserverauth.admin` | see bootstrap section |
+| `/authadmin info <name>` | admin / console | `mcserverauth.admin` | shows display name, full email, created / last login time, last IP |
 
 ## Config (`config.yml`)
 
@@ -158,19 +242,45 @@ ip-ban:
   window-minutes: 10   # ... within this window
   ban-minutes: 10      # result in a temporary ban
 login-timeout-seconds: 60
+code-wait-timeout-minutes: 10
 password:
   min-length: 6
   max-length: 64
 session-remember:
   enabled: false       # feature C, off by default
   minutes: 5
+email:
+  max-accounts-per-email: 3
+  code-valid-minutes: 15
+  code-max-attempts: 5
+  smtp:
+    host: ""           # e.g. smtp.gmail.com
+    port: 587
+    security: starttls # starttls | ssl | none (none only for the local test mail server)
+    username: ""
+    password: ""       # app password; never commit a real one
+    from: ""           # e.g. "My Server <noreply@example.com>"
 ```
+
+### When SMTP is not configured
+
+The plugin refuses new registrations (dialog 2a shows "Registration is unavailable,
+contact an admin") and logs a startup warning. Existing players can still log in;
+**Forgot password?** shows "Password reset is unavailable, contact an admin".
+It never lets a player register without a verified email.
+
+If sending fails at runtime (SMTP error), the player sees "Could not send the email,
+try again later", the failure goes to the server log, and the send does **not** count
+against the player's send limits.
 
 ## Player-facing text
 
 All player-facing text is **English** and lives in `messages.yml` (MiniMessage
 format), not in code. Keys cover: dialog titles, input labels, button labels, each
-error reason, each disconnect reason, command feedback.
+error reason, each disconnect reason, command feedback, and the subject and body of
+the two emails (verification, reset). Email bodies are plain text and include the
+code, its validity time, the player name, and a line saying "If this wasn't you,
+ignore this email."
 
 ## Error handling
 
@@ -178,8 +288,10 @@ error reason, each disconnect reason, command feedback.
   try again" message; full error to the server log.
 - Plugin cannot open the database at startup → log the error and disable the plugin
   **and** stop the server from accepting players (fail closed, never fail open).
+- SMTP errors → see "When SMTP is not configured".
 - Unknown or stale dialog response (no waiting connection) → ignored.
-- Player disconnects mid-flow → the waiting future is completed and cleaned up.
+- Player disconnects mid-flow → the waiting future is completed and cleaned up;
+  live codes stay valid until they expire.
 
 ## Testing
 
@@ -188,21 +300,31 @@ Automated (JUnit 5, no running server):
 - `PasswordHasher`: hash differs from input, verify true/false, two hashes of the
   same password differ.
 - `AccountStore` against a temp SQLite file: create, find (case-insensitive), update,
-  reset, server password read/write.
+  reset, count per email, server password read/write.
 - `AttemptLimiter` with a fake clock: per-connection limit, IP window, ban expiry.
 - `SessionCache` with a fake clock: disabled returns nothing, enabled expires.
+- `EmailAddress`: valid / invalid formats, length limit, normalization, masking.
+- `CodeService` with a fake clock: correct code accepted once, wrong attempts burn
+  the code, expiry, new code replaces old, send-limit cooldowns per account and IP.
 - `AuthConfig` validation rejects bad values.
 
-Manual, on the local Paper 26.3 test server (port 34127) with an offline client:
+Manual, on the local Paper 26.3 test server (port 34127) with an offline client and
+the local fake mail server (inbox on port 41854):
 
-1. New player: server password → set password → enters world.
-2. Returning player: both passwords correct → enters world.
-3. Wrong server password 3 times → disconnected; repeated → IP banned temporarily.
-4. Wrong personal password → disconnected; never sees the world.
-5. Same name joins while the real player is online → new connection refused.
-6. `Steve` registered, `steve` joins → refused with casing hint.
-7. Timeout and closing the dialog → disconnected.
-8. `/changepassword` works; old password no longer accepted.
-9. `/authadmin reset` → player is asked to set a new password next time.
-10. `/authadmin setserverpassword` → new password required for new joins.
-11. Session remember on: reconnect within 5 min from the same IP skips dialogs.
+1. New player: server password → password + email → code from inbox → enters world.
+2. Wrong verification code 5 times → code burned; Resend works after cooldown.
+3. Returning player: both passwords correct → enters world.
+4. Wrong server password 3 times → disconnected; repeated → IP banned temporarily.
+5. Wrong personal password → disconnected; never sees the world.
+6. Forgot password → code from inbox → new password → enters world; old password
+   rejected next time.
+7. Forgot password, disconnect, rejoin → "I already have a code" → reset works.
+8. Forgot password twice within 15 min → second request refused with wait time.
+9. Same name joins while the real player is online → new connection refused.
+10. `Steve` registered, `steve` joins → refused with casing hint.
+11. Timeout and closing the dialog → disconnected.
+12. `/changepassword` works; old password no longer accepted.
+13. `/authadmin reset` → player registers again next time (new email allowed).
+14. `/authadmin setserverpassword` → new password required for new joins.
+15. Session remember on: reconnect within 5 min from the same IP skips dialogs.
+16. SMTP blank in config → registration refused with message, existing login works.
