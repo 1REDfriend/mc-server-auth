@@ -44,4 +44,15 @@ class SessionCacheTest {
         cache.forget("steve");
         assertFalse(cache.isRemembered("steve", ip));
     }
+
+    @Test
+    void clearRemovesEveryEntry() throws UnknownHostException {
+        SessionCache cache = new SessionCache(clock, true, Duration.ofMinutes(5));
+        InetAddress other = InetAddress.getByName("10.0.0.2");
+        cache.remember("steve", ip);
+        cache.remember("alex", other);
+        cache.clear();
+        assertFalse(cache.isRemembered("steve", ip));
+        assertFalse(cache.isRemembered("alex", other));
+    }
 }

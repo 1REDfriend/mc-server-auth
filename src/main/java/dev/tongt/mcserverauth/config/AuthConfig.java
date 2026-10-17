@@ -57,7 +57,7 @@ public record AuthConfig(
                 c.getString("email.smtp.password", ""),
                 c.getString("email.smtp.from", "").trim());
         return new AuthConfig(
-                positive(c, "max-attempts-per-connection"),
+                atMost(c, "max-attempts-per-connection", 20),
                 positive(c, "ip-ban.failures"),
                 minutes(c, "ip-ban.window-minutes"),
                 minutes(c, "ip-ban.ban-minutes"),
@@ -69,7 +69,7 @@ public record AuthConfig(
                 minutes(c, "session-remember.minutes"),
                 positive(c, "email.max-accounts-per-email"),
                 minutes(c, "email.code-valid-minutes"),
-                positive(c, "email.code-max-attempts"),
+                atMost(c, "email.code-max-attempts", 10),
                 smtp);
     }
 
@@ -83,6 +83,14 @@ public record AuthConfig(
 
     private static Duration minutes(ConfigurationSection c, String path) {
         return Duration.ofMinutes(positive(c, path));
+    }
+
+    private static int atMost(ConfigurationSection c, String path, int max) {
+        int value = positive(c, path);
+        if (value > max) {
+            throw new IllegalArgumentException(path + " must be " + max + " or less");
+        }
+        return value;
     }
 
     private static int positive(ConfigurationSection c, String path) {

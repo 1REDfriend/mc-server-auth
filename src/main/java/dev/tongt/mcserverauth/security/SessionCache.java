@@ -47,4 +47,9 @@ public final class SessionCache {
     public void forget(String nameLower) {
         entries.keySet().removeIf(key -> key.nameLower().equals(nameLower));
     }
+
+    /** Forgets every remembered login, e.g. after the server password changed. */
+    public void clear() {
+        entries.clear();
+    }
 }

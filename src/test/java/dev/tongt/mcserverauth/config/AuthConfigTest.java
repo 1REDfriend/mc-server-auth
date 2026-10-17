@@ -97,4 +97,24 @@ class AuthConfigTest {
         yaml.set("email.smtp.from", "Test <noreply@example.test>");
         assertTrue(AuthConfig.from(yaml).smtp().configured());
     }
+
+    @Test
+    void capsCodeMaxAttemptsAtTen() {
+        YamlConfiguration yaml = defaults();
+        yaml.set("email.code-max-attempts", 11);
+        var e = assertThrows(IllegalArgumentException.class, () -> AuthConfig.from(yaml));
+        assertTrue(e.getMessage().contains("email.code-max-attempts"));
+        yaml.set("email.code-max-attempts", 10);
+        assertEquals(10, AuthConfig.from(yaml).codeMaxAttempts());
+    }
+
+    @Test
+    void capsMaxAttemptsPerConnectionAtTwenty() {
+        YamlConfiguration yaml = defaults();
+        yaml.set("max-attempts-per-connection", 21);
+        var e = assertThrows(IllegalArgumentException.class, () -> AuthConfig.from(yaml));
+        assertTrue(e.getMessage().contains("max-attempts-per-connection"));
+        yaml.set("max-attempts-per-connection", 20);
+        assertEquals(20, AuthConfig.from(yaml).maxAttemptsPerConnection());
+    }
 }

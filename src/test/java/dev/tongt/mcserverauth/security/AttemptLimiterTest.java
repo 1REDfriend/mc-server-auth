@@ -37,4 +37,16 @@ class AttemptLimiterTest {
         clock.advance(Duration.ofMinutes(10));
         assertTrue(limiter.banRemaining(ip).isEmpty());
     }
+
+    @Test
+    void recordFailurePrunesStaleAddresses() throws Exception {
+        InetAddress old = InetAddress.getByName("10.0.0.1");
+        InetAddress banned = InetAddress.getByName("10.0.0.2");
+        limiter.recordFailure(old);
+        for (int i = 0; i < 5; i++) limiter.recordFailure(banned);
+        assertEquals(2, limiter.trackedAddresses());
+        clock.advance(Duration.ofMinutes(11));
+        limiter.recordFailure(ip);
+        assertEquals(1, limiter.trackedAddresses());
+    }
 }

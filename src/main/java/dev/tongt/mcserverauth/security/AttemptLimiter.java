@@ -28,15 +28,30 @@ public final class AttemptLimiter {
 
     public synchronized void recordFailure(InetAddress ip) {
         Instant now = clock.instant();
+        prune(now);
         Deque<Instant> failures = recentFailures.computeIfAbsent(ip, k -> new ArrayDeque<>());
         failures.addLast(now);
-        while (!failures.isEmpty() && failures.peekFirst().isBefore(now.minus(window))) {
-            failures.removeFirst();
-        }
         if (failures.size() >= failuresBeforeBan) {
             bannedUntil.put(ip, now.plus(banDuration));
             recentFailures.remove(ip);
         }
+    }
+
+    /** Drops failures outside the window, addresses with none left, and expired bans. Cheap at this scale. */
+    private void prune(Instant now) {
+        Instant cutoff = now.minus(window);
+        recentFailures.values().removeIf(failures -> {
+            while (!failures.isEmpty() && failures.peekFirst().isBefore(cutoff)) {
+                failures.removeFirst();
+            }
+            return failures.isEmpty();
+        });
+        bannedUntil.values().removeIf(until -> !now.isBefore(until));
+    }
+
+    /** Number of addresses with failures or bans held in memory; for tests. */
+    synchronized int trackedAddresses() {
+        return recentFailures.size() + bannedUntil.size();
     }
 
     public synchronized Optional<Duration> banRemaining(InetAddress ip) {

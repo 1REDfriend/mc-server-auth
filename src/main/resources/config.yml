@@ -1,4 +1,4 @@
-# Failed password attempts allowed per connection before the player is disconnected.
+# Failed password attempts allowed per connection before the player is disconnected (1-20).
 max-attempts-per-connection: 3
 ip-ban:
   failures: 5          # failures from one IP ...
@@ -10,13 +10,15 @@ code-wait-timeout-minutes: 10
 password:
   min-length: 6
   max-length: 64
+# Skips BOTH passwords on a reconnect of the same name from the same IP within the window. Anyone else on that
+# IP (shared Wi-Fi, NAT) can then join as that name. Changing the server password clears all remembered logins.
 session-remember:
   enabled: false       # skip dialogs on reconnect from the same IP
   minutes: 5
 email:
   max-accounts-per-email: 3
   code-valid-minutes: 15
-  code-max-attempts: 5
+  code-max-attempts: 5 # wrong codes (from the IP that asked for it) before a code is burned; 1-10
   smtp:
     host: ""           # e.g. smtp.gmail.com; blank disables registration and reset
     port: 587
