@@ -74,7 +74,8 @@ public final class DialogFactory {
         String bodyKey = reset ? "dialog.reset-code.body" : "dialog.verify-email.body";
         return build(title, body(bodyKey, error, email(maskedEmail)),
                 List.of(text("code", "input.code", CODE_LENGTH)),
-                List.of(button("button.confirm", SUBMIT), button("button.resend", RESEND), button("button.back", BACK)),
+                List.of(button("button.confirm", SUBMIT), button("button.resend", RESEND), button("button.back", BACK),
+                        button("button.cancel", CANCEL)),
                 false);
     }
 
@@ -100,7 +101,9 @@ public final class DialogFactory {
                 .body(body)
                 .inputs(inputs)
                 .build();
-        DialogType type = DialogType.multiAction(buttons).columns(Math.min(buttons.size(), 3)).build();
+        // Four buttons read better as a 2 x 2 grid than as a row of three plus one.
+        int columns = buttons.size() == 4 ? 2 : Math.min(buttons.size(), 3);
+        DialogType type = DialogType.multiAction(buttons).columns(columns).build();
         return Dialog.create(factory -> factory.empty().base(base).type(type));
     }
 

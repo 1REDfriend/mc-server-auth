@@ -52,7 +52,7 @@ error:
   email-invalid: "<red>That email address does not look right."
   email-limit: "<red>Too many accounts already use this email."
   code-wrong: "<red>Wrong code."
-  code-expired: "<red>That code is no longer valid. Press Resend code to get a new one."
+  code-expired: "<red>That code is no longer valid. Ask for a new one."
   code-cooldown: "<red>A code was sent recently. Try again in <seconds> seconds."
   too-many-codes: "<red>Too many codes requested. Reconnect and try again later."
   email-send-failed: "<red>Could not send the email. Try again later."

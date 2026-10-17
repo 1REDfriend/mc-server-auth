@@ -59,6 +59,8 @@ public final class LoginFlow implements Listener {
         static StepResult done() { return new StepResult(Step.DONE, null); }
         static StepResult back(@Nullable Component message) { return new StepResult(Step.BACK, message); }
         static StepResult cancel() { return new StepResult(Step.CANCEL, null); }
+        /** Ends the flow with this disconnect message. */
+        static StepResult deny(Component message) { return new StepResult(Step.CANCEL, message); }
     }
 
     /** Per-connection state. */
@@ -68,17 +70,22 @@ public final class LoginFlow implements Listener {
         final String name;
         final String key;
         final InetAddress ip;
+        /** Soft deadline for normal dialogs; refreshed after each code dialog. */
         Instant deadline;
+        /** Absolute end of the whole flow for this connection; never extended. */
+        final Instant hardDeadline;
         int failures;
         int registerSends;
 
-        Session(PlayerConfigurationConnection connection, String name, InetAddress ip, Instant deadline) {
+        Session(PlayerConfigurationConnection connection, String name, InetAddress ip, Instant start,
+                Duration loginTimeout, Duration codeWaitTimeout) {
             this.connection = connection;
             this.waitKey = DialogWaiter.keyOf(connection);
             this.name = name;
             this.key = AccountStore.key(name);
             this.ip = ip;
-            this.deadline = deadline;
+            this.deadline = start.plus(loginTimeout);
+            this.hardDeadline = start.plus(codeWaitTimeout).plus(loginTimeout.multipliedBy(2));
         }
     }
 
@@ -155,8 +162,8 @@ public final class LoginFlow implements Listener {
             return;
         }
         try {
-            Session session = new Session(connection, name,connection.getClientAddress().getAddress(),
-                    clock.instant().plus(config.loginTimeout()));
+            Session session = new Session(connection, name, connection.getClientAddress().getAddress(),
+                    clock.instant(), config.loginTimeout(), config.codeWaitTimeout());
             Component denial = run(session);
             if (denial != null) {
                 connection.disconnect(denial);
@@ -271,12 +278,12 @@ public final class LoginFlow implements Listener {
                 error = sendError;
                 continue;
             }
-            Step step = verifyCode(s, Purpose.REGISTER, email.get());
-            if (step == Step.CANCEL) {
+            StepResult verified = verifyCode(s, Purpose.REGISTER, email.get());
+            if (verified.step() == Step.CANCEL) {
                 return messages.get("kick.cancelled");
             }
-            if (step == Step.BACK) {
-                error = null;
+            if (verified.step() == Step.BACK) {
+                error = verified.message();
                 continue;
             }
             store.create(s.name, passwordHash, email.get().value(), clock.millis());
@@ -294,7 +301,7 @@ public final class LoginFlow implements Listener {
                     return null;
                 }
                 if (result.step() == Step.CANCEL) {
-                    return messages.get("kick.cancelled");
+                    return result.message() != null ? result.message() : messages.get("kick.cancelled");
                 }
                 error = result.message();
                 continue;
@@ -341,12 +348,9 @@ public final class LoginFlow implements Listener {
             break;
         }
 
-        Step step = verifyCode(s, Purpose.RESET, email);
-        if (step == Step.BACK) {
-            return StepResult.back(null);
-        }
-        if (step == Step.CANCEL) {
-            return StepResult.cancel();
+        StepResult verified = verifyCode(s, Purpose.RESET, email);
+        if (verified.step() != Step.DONE) {
+            return verified; // BACK returns to dialog 2b, with error.code-expired if the code is gone
         }
 
         Component error = null;
@@ -361,14 +365,19 @@ public final class LoginFlow implements Listener {
                 error = messages.get(problem.get(), rules.placeholders());
                 continue;
             }
-            store.updatePassword(s.name, hasher.hash(password));
+            if (!store.updatePassword(s.name, hasher.hash(password))) {
+                return StepResult.deny(messages.get("kick.account-reset")); // deleted by an admin meanwhile
+            }
             sessions.forget(s.key);
             return StepResult.done();
         }
     }
 
-    /** Code entry loop. DONE = correct code, BACK = player went back, CANCEL = closed or cancelled. */
-    private Step verifyCode(Session s, Purpose purpose, EmailAddress email) throws TimeoutException {
+    /**
+     * Code entry loop. DONE = correct code; BACK = player went back, or the code is burned or expired (then the
+     * message is error.code-expired, to show on the previous dialog); CANCEL = closed or cancelled.
+     */
+    private StepResult verifyCode(Session s, Purpose purpose, EmailAddress email) throws TimeoutException {
         boolean reset = purpose == Purpose.RESET;
         Component error = null;
         while (true) {
@@ -379,17 +388,19 @@ public final class LoginFlow implements Listener {
                 continue;
             }
             if (r.is(DialogFactory.BACK)) {
-                return Step.BACK;
+                return StepResult.back(null);
             }
             if (!r.is(DialogFactory.SUBMIT)) {
-                return Step.CANCEL;
+                return StepResult.cancel();
             }
             switch (codes.verify(purpose, s.key, r.text("code").trim())) {
                 case OK -> {
-                    return Step.DONE;
+                    return StepResult.done();
                 }
                 case WRONG -> error = messages.get("error.code-wrong");
-                case BURNED, NONE -> error = messages.get("error.code-expired");
+                case BURNED, NONE -> {
+                    return StepResult.back(messages.get("error.code-expired"));
+                }
             }
         }
     }
@@ -447,17 +458,25 @@ public final class LoginFlow implements Listener {
     }
 
     private Response prompt(Session s, Dialog dialog) throws TimeoutException {
-        Duration left = Duration.between(clock.instant(), s.deadline);
+        return show(s, dialog, Duration.between(clock.instant(), s.deadline));
+    }
+
+    /**
+     * Code dialogs get the longer email wait; afterwards the player gets a fresh login timeout. Both are capped by
+     * the session's hard deadline, so resend loops cannot keep a connection open forever.
+     */
+    private Response promptCode(Session s, Dialog dialog) throws TimeoutException {
+        Response response = show(s, dialog, config.codeWaitTimeout());
+        s.deadline = clock.instant().plus(config.loginTimeout());
+        return response;
+    }
+
+    private Response show(Session s, Dialog dialog, Duration ownTimeout) throws TimeoutException {
+        Duration toHardDeadline = Duration.between(clock.instant(), s.hardDeadline);
+        Duration left = ownTimeout.compareTo(toHardDeadline) < 0 ? ownTimeout : toHardDeadline;
         if (left.isNegative() || left.isZero()) {
             throw new TimeoutException();
         }
         return waiter.await(s.waitKey, () -> s.connection.getAudience().showDialog(dialog), left);
-    }
-
-    /** Code dialogs get the longer email wait; afterwards the player gets a fresh login timeout. */
-    private Response promptCode(Session s, Dialog dialog) throws TimeoutException {
-        Response response = waiter.await(s.waitKey, () -> s.connection.getAudience().showDialog(dialog), config.codeWaitTimeout());
-        s.deadline = clock.instant().plus(config.loginTimeout());
-        return response;
     }
 }
