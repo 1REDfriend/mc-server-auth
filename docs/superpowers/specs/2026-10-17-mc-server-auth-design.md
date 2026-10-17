@@ -102,7 +102,7 @@ Configuration phase (player is not in the world yet)
   │           then disconnect ("Too many wrong attempts").
   │           invalid → show 2a again with the reason
   │           valid   → send verification code to the email
-  │         Dialog 2a-verify: "Code sent to t***@gmail.com"
+  │         Dialog 2a-verify: "Code sent to p***@example.com"
   │           buttons: Confirm, Resend (after cooldown), Back, Cancel
   │           correct code → store account (password hash + email), continue
   │                          (the per-email limit is re-checked atomically with the
@@ -162,7 +162,7 @@ Forgot menu: Send me a code, I already have a code, Back
   ├─ Send reset code to the account's email
   │
   ▼
-Dialog R1: "Code sent to t***@gmail.com"  — enter the 6-digit code
+Dialog R1: "Code sent to p***@example.com"  — enter the 6-digit code
   │   buttons: Confirm, Resend, Back, Cancel
   │   wrong → stay on R1 (code attempt counter); counts one IP failure
   │   code burned or expired → back to dialog 2b with "That code is no longer valid"
@@ -247,7 +247,7 @@ sent to the real owner's inbox; the limits stop that from becoming spam.
 
 ### Email masking
 
-Shown as first character + `***` + `@` + full domain, e.g. `t***@gmail.com`. The full
+Shown as first character + `***` + `@` + full domain, e.g. `p***@example.com`. The full
 address is never shown in game or in command output except to admins
 (`/authadmin info <name>`).
 

@@ -36,7 +36,7 @@ public record EmailAddress(String value) {
         return Optional.of(new EmailAddress(local + "@" + domain.toLowerCase(Locale.ROOT)));
     }
 
-    /** First character of the local part, then ***, then the full domain: t***@gmail.com */
+    /** First character of the local part, then ***, then the full domain: p***@example.com */
     public String masked() {
         int at = value.lastIndexOf('@');
         return value.charAt(0) + "***" + value.substring(at);

@@ -10,7 +10,7 @@ class EmailAddressTest {
 
     @Test
     void parsesAndLowercasesDomainOnly() {
-        assertEquals("Tong.T@gmail.com", EmailAddress.parse("  Tong.T@GMail.COM ").orElseThrow().value());
+        assertEquals("Player.One@example.com", EmailAddress.parse("  Player.One@Example.COM ").orElseThrow().value());
     }
 
     @Test
@@ -51,6 +51,6 @@ class EmailAddressTest {
 
     @Test
     void masksLocalPart() {
-        assertEquals("t***@gmail.com", new EmailAddress("tongt@gmail.com").masked());
+        assertEquals("p***@example.com", new EmailAddress("player@example.com").masked());
     }
 }
