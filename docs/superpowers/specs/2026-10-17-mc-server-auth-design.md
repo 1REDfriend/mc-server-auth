@@ -264,8 +264,9 @@ email:
 
 ### When SMTP is not configured
 
-The plugin refuses new registrations (dialog 2a shows "Registration is unavailable,
-contact an admin") and logs a startup warning. Existing players can still log in;
+The plugin refuses new registrations (after the server password, a new player is
+disconnected with "Registration is unavailable. Contact an admin.") and logs a
+startup warning. Existing players can still log in;
 **Forgot password?** shows "Password reset is unavailable, contact an admin".
 It never lets a player register without a verified email.
 
@@ -286,8 +287,10 @@ ignore this email."
 
 - Database error during the flow → disconnect with a generic "login unavailable,
   try again" message; full error to the server log.
-- Plugin cannot open the database at startup → log the error and disable the plugin
-  **and** stop the server from accepting players (fail closed, never fail open).
+- Plugin cannot open the database, or `config.yml` is invalid, at startup → log the
+  error and switch to lockdown: the plugin stays enabled with only a listener that
+  refuses every login (fail closed, never fail open; disabling the plugin would let
+  everyone in).
 - SMTP errors → see "When SMTP is not configured".
 - Unknown or stale dialog response (no waiting connection) → ignored.
 - Player disconnects mid-flow → the waiting future is completed and cleaned up;
