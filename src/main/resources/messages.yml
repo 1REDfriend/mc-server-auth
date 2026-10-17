@@ -1,0 +1,104 @@
+# Player-facing text. MiniMessage format: https://docs.advntr.dev/minimessage/format
+# Placeholders in <angle brackets> are filled in by the plugin.
+dialog:
+  server-password:
+    title: "Server password"
+    body: "This server is private. Enter the server password to continue."
+  register:
+    title: "Create your account"
+    body: "First time here. Choose a personal password and enter your email. We send a code to confirm the email. Do not reuse a password from another account."
+  verify-email:
+    title: "Confirm your email"
+    body: "We sent a 6-digit code to <email>. Enter it below."
+  login:
+    title: "Log in"
+    body: "Enter your personal password."
+  forgot:
+    title: "Forgot password"
+    body: "We can send a 6-digit code to <email>."
+  reset-code:
+    title: "Reset your password"
+    body: "Enter the 6-digit code sent to <email>."
+  reset-password:
+    title: "Choose a new password"
+  change-password:
+    title: "Change password"
+  set-server-password:
+    title: "Set server password"
+input:
+  password: "Password"
+  confirm: "Confirm password"
+  email: "Email"
+  code: "6-digit code"
+  current-password: "Current password"
+  new-password: "New password"
+button:
+  submit: "Continue"
+  login: "Log in"
+  forgot: "Forgot password?"
+  cancel: "Cancel"
+  confirm: "Confirm"
+  resend: "Resend code"
+  back: "Back"
+  send-code: "Send me a code"
+  have-code: "I already have a code"
+error:
+  wrong-server-password: "<red>Wrong server password."
+  wrong-password: "<red>Wrong password."
+  password-length: "<red>Password must be <min>-<max> characters."
+  password-too-long: "<red>Password is too long. Use fewer special characters."
+  password-mismatch: "<red>The two passwords do not match."
+  password-same-as-server: "<red>Your password must be different from the server password."
+  email-invalid: "<red>That email address does not look right."
+  email-limit: "<red>Too many accounts already use this email."
+  code-wrong: "<red>Wrong code."
+  code-expired: "<red>That code is no longer valid. Press Resend code to get a new one."
+  code-cooldown: "<red>A code was sent recently. Try again in <seconds> seconds."
+  too-many-codes: "<red>Too many codes requested. Reconnect and try again later."
+  email-send-failed: "<red>Could not send the email. Try again later."
+  reset-unavailable: "<red>Password reset is unavailable. Contact an admin."
+  no-live-code: "<red>No valid code for this account. Ask for a new one."
+info:
+  code-resent: "<green>A new code was sent."
+kick:
+  cancelled: "Login cancelled."
+  timeout: "Login timed out."
+  too-many-attempts: "Too many wrong attempts."
+  ip-banned: "Too many wrong attempts from your address. Try again in <minutes> minutes."
+  name-in-use: "A player with this name is already online or logging in."
+  wrong-case: "This account is registered as <name>. Use exactly that name, including capital letters."
+  unavailable: "Login is unavailable right now. Try again later."
+  registration-unavailable: "Registration is unavailable. Contact an admin."
+  account-reset: "Your account was reset by an admin. Reconnect to register again."
+  lockdown: "Login system unavailable. Contact an admin."
+command:
+  players-only: "<red>Only players can use this command."
+  password-changed: "<green>Your password was changed."
+  usage: "<yellow>/authadmin reset <name> | /authadmin setserverpassword [password] | /authadmin info <name>"
+  reset-done: "<green>Account <name> was reset."
+  no-such-account: "<red>No account named <name>."
+  server-password-set: "<green>Server password changed. It applies to new logins."
+  console-password-logged: "<yellow>Warning: the server log records this command, including the password."
+  info: "<gray>Name: <white><name></white> | Email: <white><email></white> | Created: <white><created></white> | Last login: <white><last_login></white> | Last IP: <white><last_ip></white>"
+  error: "<red>Something went wrong. See the server log."
+email:
+  register:
+    subject: "Your verification code"
+    body: |
+      Hi {name},
+
+      Your verification code is: {code}
+
+      It is valid for {minutes} minutes.
+
+      If this wasn't you, ignore this email.
+  reset:
+    subject: "Your password reset code"
+    body: |
+      Hi {name},
+
+      Your password reset code is: {code}
+
+      It is valid for {minutes} minutes.
+
+      If this wasn't you, ignore this email. Your password has not changed.
