@@ -185,6 +185,50 @@ class CodeServiceTest {
     }
 
     @Test
+    void foreignGuessesUpToTheCapDoNotBurnTheCode() {
+        String code = issue(Purpose.RESET, "steve");
+        String wrong = code.equals("000000") ? "111111" : "000000";
+        for (int i = 0; i < 15; i++) {
+            assertEquals(Check.WRONG, codes.verify(Purpose.RESET, "steve", wrong, "10.0.1." + i));
+        }
+        assertTrue(codes.hasLiveCode(Purpose.RESET, "steve"));
+    }
+
+    @Test
+    void afterTheForeignCapACorrectCodeFromAnotherIpIsRefused() {
+        String code = issue(Purpose.RESET, "steve");
+        String wrong = code.equals("000000") ? "111111" : "000000";
+        for (int i = 0; i < 15; i++) {
+            codes.verify(Purpose.RESET, "steve", wrong, "10.0.1." + i);
+        }
+        assertEquals(Check.WRONG, codes.verify(Purpose.RESET, "steve", code, "10.0.2.1"));
+        assertEquals(Check.WRONG, codes.verify(Purpose.RESET, "steve", code, OTHER_IP));
+    }
+
+    @Test
+    void afterTheForeignCapTheRequesterIpStillSucceeds() {
+        String code = issue(Purpose.RESET, "steve");
+        String wrong = code.equals("000000") ? "111111" : "000000";
+        for (int i = 0; i < 15; i++) {
+            codes.verify(Purpose.RESET, "steve", wrong, "10.0.1." + i);
+        }
+        assertEquals(Check.OK, codes.verify(Purpose.RESET, "steve", code, IP));
+    }
+
+    @Test
+    void requesterWrongGuessesStillBurnAfterTheForeignCap() {
+        String code = issue(Purpose.RESET, "steve");
+        String wrong = code.equals("000000") ? "111111" : "000000";
+        for (int i = 0; i < 15; i++) {
+            codes.verify(Purpose.RESET, "steve", wrong, "10.0.1." + i);
+        }
+        for (int i = 0; i < 4; i++) {
+            assertEquals(Check.WRONG, codes.verify(Purpose.RESET, "steve", wrong, IP));
+        }
+        assertEquals(Check.BURNED, codes.verify(Purpose.RESET, "steve", wrong, IP));
+    }
+
+    @Test
     void cooldownRemainingDoesNotIssue() {
         assertTrue(codes.cooldownRemaining(Purpose.REGISTER, "steve", IP).isEmpty());
         assertTrue(codes.cooldownRemaining(Purpose.REGISTER, "steve", IP).isEmpty());

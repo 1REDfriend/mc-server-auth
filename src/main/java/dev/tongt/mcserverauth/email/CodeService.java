@@ -17,6 +17,8 @@ import java.util.Optional;
 /** Issues and checks short-lived 6-digit email codes. In-memory; a restart invalidates all codes. */
 public final class CodeService {
     private static final Duration HOUR = Duration.ofHours(1);
+    /** Wrong guesses from other IPs allowed per code, as a multiple of maxAttempts, before it is requester-only. */
+    private static final int FOREIGN_CAP_FACTOR = 3;
 
     public enum Purpose {
         REGISTER(Duration.ofSeconds(60), 5),
@@ -51,6 +53,8 @@ public final class CodeService {
         /** Only wrong attempts from this IP count toward burning the code. */
         final String requesterIp;
         int wrongAttempts;
+        /** Wrong guesses from other IPs; at the cap the code becomes requester-only. */
+        int foreignWrong;
 
         LiveCode(byte[] salt, byte[] hash, Instant expires, String requesterIp) {
             this.salt = salt;
@@ -174,8 +178,10 @@ public final class CodeService {
     }
 
     /**
-     * Checks a code typed from {@code ip}. A wrong attempt counts toward burning the code only when it comes from
-     * the IP that requested the code, so someone else cannot burn a victim's code; it is still WRONG for them.
+     * Checks a code typed from {@code ip}. A wrong attempt burns the code only when it comes from the IP that
+     * requested it, so someone else cannot burn a victim's code. Wrong guesses from other IPs are counted
+     * separately; after 3 * maxAttempts of them the code is requester-only and any other IP gets WRONG without a
+     * hash check, so many IPs cannot brute-force it.
      */
     public synchronized Check verify(Purpose purpose, String subject, String code, String ip) {
         Key key = new Key(purpose, subject);
@@ -188,12 +194,17 @@ public final class CodeService {
             live.remove(key);
             return Check.NONE;
         }
+        boolean requester = Objects.equals(liveCode.requesterIp, ip);
+        if (!requester && liveCode.foreignWrong >= FOREIGN_CAP_FACTOR * maxAttempts) {
+            return Check.WRONG; // requester-only now; do not even check the hash
+        }
         if (MessageDigest.isEqual(liveCode.hash, digest(liveCode.salt, attempt))) {
             live.remove(key);
             undo.remove(key);
             return Check.OK;
         }
-        if (!Objects.equals(liveCode.requesterIp, ip)) {
+        if (!requester) {
+            liveCode.foreignWrong++;
             return Check.WRONG;
         }
         liveCode.wrongAttempts++;
