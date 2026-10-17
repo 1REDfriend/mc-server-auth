@@ -17,14 +17,14 @@ class SessionCacheTest {
     @Test
     void disabledNeverRemembers() {
         SessionCache cache = new SessionCache(clock, false, Duration.ofMinutes(5));
-        cache.remember("steve", ip);
+        cache.remember("steve", ip, cache.generation());
         assertFalse(cache.isRemembered("steve", ip));
     }
 
     @Test
     void enabledRemembersUntilExpiry() {
         SessionCache cache = new SessionCache(clock, true, Duration.ofMinutes(5));
-        cache.remember("steve", ip);
+        cache.remember("steve", ip, cache.generation());
         assertTrue(cache.isRemembered("steve", ip));
         clock.advance(Duration.ofMinutes(5).plusSeconds(1));
         assertFalse(cache.isRemembered("steve", ip));
@@ -33,14 +33,14 @@ class SessionCacheTest {
     @Test
     void differentIpIsNotRemembered() throws UnknownHostException {
         SessionCache cache = new SessionCache(clock, true, Duration.ofMinutes(5));
-        cache.remember("steve", ip);
+        cache.remember("steve", ip, cache.generation());
         assertFalse(cache.isRemembered("steve", InetAddress.getByName("10.0.0.2")));
     }
 
     @Test
     void forgetRemovesAllEntriesForName() {
         SessionCache cache = new SessionCache(clock, true, Duration.ofMinutes(5));
-        cache.remember("steve", ip);
+        cache.remember("steve", ip, cache.generation());
         cache.forget("steve");
         assertFalse(cache.isRemembered("steve", ip));
     }
@@ -49,10 +49,21 @@ class SessionCacheTest {
     void clearRemovesEveryEntry() throws UnknownHostException {
         SessionCache cache = new SessionCache(clock, true, Duration.ofMinutes(5));
         InetAddress other = InetAddress.getByName("10.0.0.2");
-        cache.remember("steve", ip);
-        cache.remember("alex", other);
+        cache.remember("steve", ip, cache.generation());
+        cache.remember("alex", other, cache.generation());
         cache.clear();
         assertFalse(cache.isRemembered("steve", ip));
         assertFalse(cache.isRemembered("alex", other));
+    }
+
+    @Test
+    void rememberFromBeforeClearIsDropped() {
+        SessionCache cache = new SessionCache(clock, true, Duration.ofMinutes(5));
+        long before = cache.generation();
+        cache.clear();
+        cache.remember("steve", ip, before);
+        assertFalse(cache.isRemembered("steve", ip));
+        cache.remember("steve", ip, cache.generation());
+        assertTrue(cache.isRemembered("steve", ip));
     }
 }
