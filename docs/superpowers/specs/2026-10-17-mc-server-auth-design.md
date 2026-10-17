@@ -3,6 +3,9 @@
 Date: 2026-10-17
 Status: approved in chat, pending spec review
 Revision 2: added email verification and self-service password reset by emailed code.
+Revision 3 (security review): join-time safety net, dialog waits keyed by connection,
+hard deadline per connection, code dialog buttons, burned/expired codes return to the
+previous dialog, slow-email handling, atomic per-email limit.
 
 ## Goal
 
@@ -80,9 +83,13 @@ Configuration phase (player is not in the world yet)
   │           invalid → show 2a again with the reason
   │           valid   → send verification code to the email
   │         Dialog 2a-verify: "Code sent to t***@gmail.com"
-  │           buttons: Confirm, Resend (after cooldown), Cancel
+  │           buttons: Confirm, Resend (after cooldown), Back, Cancel
   │           correct code → store account (password hash + email), continue
-  │           wrong code   → code attempt counter (see Codes)
+  │                          (the per-email limit is re-checked atomically with the
+  │                          insert; over the limit → back to 2a with the reason)
+  │           wrong code   → stay on 2a-verify (see Codes for the attempt counter)
+  │           code burned or expired → back to 2a with "That code is no longer valid"
+  │           Back → 2a; Cancel → disconnect
   │
   │   yes ─► Dialog 2b: personal password
   │           buttons: Log in, Forgot password?, Cancel
@@ -91,27 +98,44 @@ Configuration phase (player is not in the world yet)
   │
   ▼
 Configuration completes → player enters the world
+  │
+  └─ Join-time safety net (PlayerJoinEvent, lowest priority): the player must hold a
+     "passed" token recorded when the dialogs succeeded, at most 30 s old. It is
+     consumed on join. A join without a fresh token is kicked, so nobody reaches the
+     world without passing the flow (for example after dropping mid-flow).
 ```
+
+A player who is already in the world and is sent back to the configuration phase
+(reconfiguration) skips the dialogs. That needs both: the player joined through the
+flow above (tracked from join to quit) and is online right now.
 
 ### Reset flow (from dialog 2b)
 
 ```
 Forgot password?
   │
-  ├─ Reset cooldown for this account or IP active?
-  │      → show "A code was sent recently, try again in N minutes",
-  │        return to dialog 2b
+  ▼
+Forgot menu: Send me a code, I already have a code, Back
+  │
+  ├─ Send me a code, but the reset cooldown for this account or IP is active?
+  │      → stay in the Forgot menu showing "A code was sent recently, try again in
+  │        N seconds"
   │
   ├─ Send reset code to the account's email
   │
   ▼
 Dialog R1: "Code sent to t***@gmail.com"  — enter the 6-digit code
-  │   wrong → code attempt counter; code burned → back to dialog 2b
+  │   buttons: Confirm, Resend, Back, Cancel
+  │   wrong → stay on R1 (code attempt counter)
+  │   code burned or expired → back to dialog 2b with "That code is no longer valid"
+  │   Back → dialog 2b; Cancel → disconnect
   ▼
 Dialog R2: new password + confirm (same rules as 2a)
   │
   ▼
 Store new hash, clear the account's session-cache entries → player enters the world
+  (if an admin deleted the account meanwhile → disconnect with the account-reset
+  message instead)
 ```
 
 The reset does not need the player to stay connected: if they disconnect, the code
@@ -120,8 +144,13 @@ can choose **Forgot password?** → **I already have a code** to go straight to 
 
 ### Timeouts
 
-- Whole flow: 60 s by default.
-- While a dialog that waits for an emailed code is open (2a-verify, R1): 10 minutes.
+- Normal dialogs: 60 s by default (`login-timeout-seconds`), counted from the start
+  of the connection and restarted after each code dialog.
+- While a dialog that waits for an emailed code is open (2a-verify, R1): 10 minutes
+  (`code-wait-timeout-minutes`).
+- Hard deadline per connection: start + code wait + 2 × login timeout (12 minutes
+  with the defaults). Every dialog waits at most until then, so Resend / Back loops
+  cannot keep a connection in the configuration phase forever.
 - Timeout, closing the dialog, or Cancel → disconnect with a message.
 
 Failures of the server password and the personal password share one
@@ -171,7 +200,7 @@ Each unit has one job and can be tested on its own. Package root:
 | `CodeService` | Issue, verify and burn codes per (account, purpose); enforce expiry, attempts and send limits. In-memory. | Clock, `SecureRandom` |
 | `MailSender` | Send one plain-text email over SMTP (STARTTLS or SSL) on a background thread; returns a future. Interface + SMTP implementation, so tests use a fake. | Jakarta Mail (Eclipse Angus), shaded |
 | `LoginFlow` | Drives the dialogs in the configuration phase following the flows above. Holds no storage or mail logic itself. | all of the above, Paper dialog API |
-| `PreLoginGuard` | The pre-login checks (ban, duplicate online name, case mismatch). | `AccountStore`, `AttemptLimiter` |
+| `PreLoginGuard` | The pre-login checks (ban, duplicate online name, case mismatch). Asks `LoginFlow.isNameBusy`, which is thread-safe: names in the world, in the flow, or just passed and on the way in. | `AccountStore`, `AttemptLimiter`, `LoginFlow` |
 | `ChangePasswordCommand` | `/changepassword` (feature A): dialog with current, new, confirm. | dialog builders, `AccountStore`, `PasswordHasher` |
 | `AuthAdminCommand` | `/authadmin reset <name>`, `/authadmin setserverpassword`, `/authadmin info <name>` (feature B). | `AccountStore`, `PasswordHasher` |
 | `McServerAuthPlugin` | Wires everything, registers listeners and commands, closes the database on disable. | everything |
@@ -274,6 +303,11 @@ If sending fails at runtime (SMTP error), the player sees "Could not send the em
 try again later", the failure goes to the server log, and the send does **not** count
 against the player's send limits.
 
+If the SMTP server has not answered within 30 s, the plugin stops waiting but the email
+may still arrive. The code stays valid, the send **does** count against the limits, and
+the code dialog opens with "The email is taking a while. Check your inbox in a minute;
+you can also press Resend later."
+
 ## Player-facing text
 
 All player-facing text is **English** and lives in `messages.yml` (MiniMessage
@@ -295,6 +329,13 @@ ignore this email."
 - Unknown or stale dialog response (no waiting connection) → ignored.
 - Player disconnects mid-flow → the waiting future is completed and cleaned up;
   live codes stay valid until they expire.
+- Dialog waits during the configuration phase are keyed by the connection object, not
+  the UUID. In offline mode a second connection with the same name has the same UUID;
+  keying by connection stops a refused duplicate from answering or cancelling the real
+  player's dialog. In-game dialogs (`/changepassword`, `/authadmin`) are keyed by UUID.
+- Any unexpected error or `Error` in the configuration handler → log it and disconnect
+  with "login unavailable"; the handler never lets an exception through.
+- Plugin disable → every waiting dialog is completed as closed.
 
 ## Testing
 
