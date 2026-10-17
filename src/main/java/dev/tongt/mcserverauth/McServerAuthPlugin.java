@@ -17,16 +17,24 @@ import dev.tongt.mcserverauth.security.PasswordRules;
 import dev.tongt.mcserverauth.security.SessionCache;
 import dev.tongt.mcserverauth.storage.AccountStore;
 import net.kyori.adventure.text.Component;
+import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.AsyncPlayerPreLoginEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.sql.SQLException;
 import java.time.Clock;
+import java.util.logging.Level;
 
 public final class McServerAuthPlugin extends JavaPlugin {
     private static final int BCRYPT_COST = 12;
@@ -39,34 +47,37 @@ public final class McServerAuthPlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
-        saveDefaultConfig();
-        File messagesFile = new File(getDataFolder(), "messages.yml");
-        if (!messagesFile.exists()) {
-            saveResource("messages.yml", false);
+        Messages messages = loadMessages();
+        try {
+            start(messages);
+        } catch (Throwable t) {
+            // An exception escaping onEnable makes Paper disable the plugin and drop its listeners, which would
+            // let everyone join without authenticating. Replace whatever was registered with a lockdown instead.
+            HandlerList.unregisterAll(this);
+            lockDown(messages, "McServerAuth failed to start", t);
         }
-        Messages messages = new Messages(YamlConfiguration.loadConfiguration(messagesFile));
+    }
 
+    private void start(Messages messages) throws IOException, InvalidConfigurationException, SQLException {
+        saveDefaultConfig();
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.load(new File(getDataFolder(), "config.yml"));
+        yaml.setDefaults(bundledYaml("config.yml"));
         AuthConfig config;
         try {
-            config = AuthConfig.from(getConfig());
+            config = AuthConfig.from(yaml);
         } catch (IllegalArgumentException e) {
-            lockDown(messages, "Invalid config.yml: " + e.getMessage(), null);
-            return;
+            throw new IllegalStateException("Invalid config.yml: " + e.getMessage(), e);
         }
 
         PasswordHasher hasher = new PasswordHasher(BCRYPT_COST);
         SecureRandom random = new SecureRandom();
-        try {
-            store = AccountStore.open(new File(getDataFolder(), "accounts.db").toPath());
-            if (store.serverPasswordHash().isEmpty()) {
-                String generated = randomPassword(random);
-                store.setServerPasswordHash(hasher.hash(generated));
-                getLogger().warning("No server password was set. Generated one: " + generated);
-                getLogger().warning("Change it with /authadmin setserverpassword. This is the only time it is shown.");
-            }
-        } catch (SQLException e) {
-            lockDown(messages, "Could not open the account database", e);
-            return;
+        store = AccountStore.open(new File(getDataFolder(), "accounts.db").toPath());
+        if (store.serverPasswordHash().isEmpty()) {
+            String generated = randomPassword(random);
+            store.setServerPasswordHash(hasher.hash(generated));
+            getLogger().warning("No server password was set. Generated one: " + generated);
+            getLogger().warning("Change it with /authadmin setserverpassword. This is the only time it is shown.");
         }
 
         Clock clock = Clock.systemUTC();
@@ -112,12 +123,40 @@ public final class McServerAuthPlugin extends JavaPlugin {
         }
     }
 
-    private void lockDown(Messages messages, String reason, Exception cause) {
-        if (cause == null) {
-            getLogger().severe(reason + " - refusing all logins until this is fixed.");
-        } else {
-            getLogger().log(java.util.logging.Level.SEVERE, reason + " - refusing all logins until this is fixed.", cause);
+    /** Never throws: an unreadable messages.yml falls back to the bundled one. */
+    private Messages loadMessages() {
+        YamlConfiguration bundled = bundledYaml("messages.yml");
+        try {
+            File file = new File(getDataFolder(), "messages.yml");
+            if (!file.exists()) {
+                saveResource("messages.yml", false);
+            }
+            YamlConfiguration yaml = new YamlConfiguration();
+            yaml.load(file);
+            // Keys missing from an older file on disk fall back to the bundled English text.
+            yaml.setDefaults(bundled);
+            return new Messages(yaml);
+        } catch (Throwable t) {
+            getLogger().log(Level.SEVERE, "Could not read messages.yml; using the bundled messages", t);
+            return new Messages(bundled);
         }
+    }
+
+    /** Never throws: a missing or unreadable resource gives an empty configuration. */
+    private YamlConfiguration bundledYaml(String resource) {
+        YamlConfiguration yaml = new YamlConfiguration();
+        try (InputStream in = getResource(resource)) {
+            if (in != null) {
+                yaml.load(new InputStreamReader(in, StandardCharsets.UTF_8));
+            }
+        } catch (Exception e) {
+            getLogger().log(Level.SEVERE, "Could not read bundled " + resource, e);
+        }
+        return yaml;
+    }
+
+    private void lockDown(Messages messages, String reason, Throwable cause) {
+        getLogger().log(Level.SEVERE, reason + " - refusing all logins until this is fixed.", cause);
         getServer().getPluginManager().registerEvents(new Lockdown(messages.get("kick.lockdown")), this);
     }
 
@@ -137,7 +176,7 @@ public final class McServerAuthPlugin extends JavaPlugin {
             this.message = message;
         }
 
-        @EventHandler
+        @EventHandler(priority = EventPriority.HIGHEST)
         public void onPreLogin(AsyncPlayerPreLoginEvent event) {
             event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER, message);
         }
