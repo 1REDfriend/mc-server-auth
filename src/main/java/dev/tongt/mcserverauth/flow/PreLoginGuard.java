@@ -2,6 +2,7 @@ package dev.tongt.mcserverauth.flow;
 
 import dev.tongt.mcserverauth.config.Messages;
 import dev.tongt.mcserverauth.security.AttemptLimiter;
+import dev.tongt.mcserverauth.security.IpKey;
 import dev.tongt.mcserverauth.storage.Account;
 import dev.tongt.mcserverauth.storage.AccountStore;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
@@ -38,7 +39,7 @@ public final class PreLoginGuard implements Listener {
         }
         String name = event.getName();
 
-        Optional<Duration> ban = limiter.banRemaining(event.getAddress());
+        Optional<Duration> ban = limiter.banRemaining(IpKey.of(event.getAddress()));
         if (ban.isPresent()) {
             long minutes = Math.max(1, (ban.get().toSeconds() + 59) / 60);
             event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_BANNED,

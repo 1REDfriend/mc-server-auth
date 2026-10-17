@@ -3,7 +3,6 @@ package dev.tongt.mcserverauth.security;
 import dev.tongt.mcserverauth.testutil.MutableClock;
 import org.junit.jupiter.api.Test;
 
-import java.net.InetAddress;
 import java.time.Duration;
 import java.time.Instant;
 
@@ -13,7 +12,7 @@ class AttemptLimiterTest {
     private final MutableClock clock = new MutableClock(Instant.parse("2026-10-17T00:00:00Z"));
     private final AttemptLimiter limiter =
             new AttemptLimiter(clock, 5, Duration.ofMinutes(10), Duration.ofMinutes(10));
-    private final InetAddress ip = InetAddress.getLoopbackAddress();
+    private final String ip = "127.0.0.1";
 
     @Test
     void bansAfterFailuresInsideWindow() {
@@ -39,9 +38,9 @@ class AttemptLimiterTest {
     }
 
     @Test
-    void recordFailurePrunesStaleAddresses() throws Exception {
-        InetAddress old = InetAddress.getByName("10.0.0.1");
-        InetAddress banned = InetAddress.getByName("10.0.0.2");
+    void recordFailurePrunesStaleAddresses() {
+        String old = "10.0.0.1";
+        String banned = "10.0.0.2";
         limiter.recordFailure(old);
         for (int i = 0; i < 5; i++) limiter.recordFailure(banned);
         assertEquals(2, limiter.trackedAddresses());

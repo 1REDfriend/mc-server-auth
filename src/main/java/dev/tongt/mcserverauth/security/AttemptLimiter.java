@@ -1,6 +1,5 @@
 package dev.tongt.mcserverauth.security;
 
-import java.net.InetAddress;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -10,14 +9,14 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
-/** Counts password failures per IP and issues temporary bans. In-memory only. */
+/** Counts password failures per IP key (see {@link IpKey}) and issues temporary bans. In-memory only. */
 public final class AttemptLimiter {
     private final Clock clock;
     private final int failuresBeforeBan;
     private final Duration window;
     private final Duration banDuration;
-    private final Map<InetAddress, Deque<Instant>> recentFailures = new HashMap<>();
-    private final Map<InetAddress, Instant> bannedUntil = new HashMap<>();
+    private final Map<String, Deque<Instant>> recentFailures = new HashMap<>();
+    private final Map<String, Instant> bannedUntil = new HashMap<>();
 
     public AttemptLimiter(Clock clock, int failuresBeforeBan, Duration window, Duration banDuration) {
         this.clock = clock;
@@ -26,7 +25,7 @@ public final class AttemptLimiter {
         this.banDuration = banDuration;
     }
 
-    public synchronized void recordFailure(InetAddress ip) {
+    public synchronized void recordFailure(String ip) {
         Instant now = clock.instant();
         prune(now);
         Deque<Instant> failures = recentFailures.computeIfAbsent(ip, k -> new ArrayDeque<>());
@@ -54,7 +53,7 @@ public final class AttemptLimiter {
         return recentFailures.size() + bannedUntil.size();
     }
 
-    public synchronized Optional<Duration> banRemaining(InetAddress ip) {
+    public synchronized Optional<Duration> banRemaining(String ip) {
         Instant until = bannedUntil.get(ip);
         if (until == null) {
             return Optional.empty();

@@ -9,6 +9,7 @@ import dev.tongt.mcserverauth.email.MailSender;
 import dev.tongt.mcserverauth.email.MailSender.Sending;
 import dev.tongt.mcserverauth.flow.DialogWaiter.Response;
 import dev.tongt.mcserverauth.security.AttemptLimiter;
+import dev.tongt.mcserverauth.security.IpKey;
 import dev.tongt.mcserverauth.security.PasswordHasher;
 import dev.tongt.mcserverauth.security.PasswordRules;
 import dev.tongt.mcserverauth.security.SessionCache;
@@ -77,6 +78,8 @@ public final class LoginFlow implements Listener {
         final String name;
         final String key;
         final InetAddress ip;
+        /** Key for IP-based limits: IPv6 grouped by /64. */
+        final String ipKey;
         /** Soft deadline for normal dialogs; refreshed after each code dialog. */
         Instant deadline;
         /** Absolute end of the whole flow for this connection; never extended. */
@@ -94,6 +97,7 @@ public final class LoginFlow implements Listener {
             this.name = name;
             this.key = AccountStore.key(name);
             this.ip = ip;
+            this.ipKey = IpKey.of(ip);
             this.deadline = start.plus(loginTimeout);
             this.hardDeadline = start.plus(codeWaitTimeout).plus(loginTimeout.multipliedBy(2));
         }
@@ -121,7 +125,7 @@ public final class LoginFlow implements Listener {
     private final Map<UUID, PassedToken> passed = new ConcurrentHashMap<>();
     private final Set<String> inFlight = ConcurrentHashMap.newKeySet();
     /** Number of connections per IP currently in the configuration-phase flow. */
-    private final Map<InetAddress, Integer> inFlightPerIp = new ConcurrentHashMap<>();
+    private final Map<String, Integer> inFlightPerIp = new ConcurrentHashMap<>();
     /** Lowercase names of players in the world, readable from any thread. */
     private final Set<String> online = ConcurrentHashMap.newKeySet();
 
@@ -158,11 +162,11 @@ public final class LoginFlow implements Listener {
 
     /** True when this IP already has the maximum number of connections in the login flow. Thread-safe. */
     public boolean tooManyConnections(InetAddress ip) {
-        return inFlightPerIp.getOrDefault(ip, 0) >= MAX_CONNECTIONS_PER_IP;
+        return inFlightPerIp.getOrDefault(IpKey.of(ip), 0) >= MAX_CONNECTIONS_PER_IP;
     }
 
     /** Counts one more connection from this IP unless it is already at the limit. Atomic. */
-    private boolean enterIp(InetAddress ip) {
+    private boolean enterIp(String ip) {
         boolean[] entered = {false};
         inFlightPerIp.compute(ip, (k, count) -> {
             int current = count == null ? 0 : count;
@@ -175,7 +179,7 @@ public final class LoginFlow implements Listener {
         return entered[0];
     }
 
-    private void leaveIp(InetAddress ip) {
+    private void leaveIp(String ip) {
         inFlightPerIp.computeIfPresent(ip, (k, count) -> count <= 1 ? null : count - 1);
     }
 
@@ -193,13 +197,14 @@ public final class LoginFlow implements Listener {
             return; // reconfiguration of a player who already logged in and is in the world
         }
         InetAddress ip = connection.getClientAddress().getAddress();
+        String ipKey = IpKey.of(ip);
         // PreLoginGuard refuses early; this is the atomic check.
-        if (!enterIp(ip)) {
+        if (!enterIp(ipKey)) {
             connection.disconnect(messages.get("kick.too-many-connections"));
             return;
         }
         if (!inFlight.add(key)) {
-            leaveIp(ip);
+            leaveIp(ipKey);
             connection.disconnect(messages.get("kick.name-in-use"));
             return;
         }
@@ -231,7 +236,7 @@ public final class LoginFlow implements Listener {
             }
         } finally {
             inFlight.remove(key);
-            leaveIp(ip);
+            leaveIp(ipKey);
         }
     }
 
@@ -273,6 +278,8 @@ public final class LoginFlow implements Listener {
         }
         String serverHash = store.serverPasswordHash()
                 .orElseThrow(() -> new SQLException("Server password is not set"));
+        // Captured once the server password is known good; a later clear() makes remember() a no-op.
+        long generation = -1;
 
         Component error = null;
         while (true) {
@@ -281,14 +288,15 @@ public final class LoginFlow implements Listener {
                 r = promptServerPassword(s, dialogs.serverPassword(error));
             } catch (TimeoutException e) {
                 // Idling on the first dialog keeps the name busy for others; make it cost this IP.
-                limiter.recordFailure(s.ip);
+                limiter.recordFailure(s.ipKey);
                 throw e;
             }
             if (!r.is(DialogFactory.SUBMIT)) {
-                limiter.recordFailure(s.ip);
+                limiter.recordFailure(s.ipKey);
                 return messages.get("kick.cancelled");
             }
             if (hasher.verify(r.text("password"), serverHash)) {
+                generation = sessions.generation();
                 break;
             }
             Component denial = recordFailure(s);
@@ -305,7 +313,7 @@ public final class LoginFlow implements Listener {
         }
         if (denial == null) {
             store.recordLogin(s.name, clock.millis(), s.ip.getHostAddress());
-            sessions.remember(s.key, s.ip);
+            sessions.remember(s.key, s.ip, generation);
         }
         return denial;
     }
@@ -375,7 +383,7 @@ public final class LoginFlow implements Listener {
     private @Nullable Component login(Session s, Account account, String serverHash) throws TimeoutException, SQLException {
         Component error = null;
         while (true) {
-            Response r = prompt(s, dialogs.login(error));
+            Response r = promptHolding(s, dialogs.login(error));
             if (r.is(DialogFactory.FORGOT)) {
                 StepResult result = forgot(s, account, serverHash);
                 if (result.step() == Step.DONE) {
@@ -388,6 +396,7 @@ public final class LoginFlow implements Listener {
                 continue;
             }
             if (!r.is(DialogFactory.SUBMIT)) {
+                limiter.recordFailure(s.ipKey);
                 return messages.get("kick.cancelled");
             }
             if (hasher.verify(r.text("password"), account.passwordHash())) {
@@ -406,7 +415,7 @@ public final class LoginFlow implements Listener {
         Component menuError = null;
         Component codeNotice = null;
         while (true) {
-            Response r = prompt(s, dialogs.forgotMenu(email.masked(), menuError));
+            Response r = promptHolding(s, dialogs.forgotMenu(email.masked(), menuError));
             if (r.is(DialogFactory.BACK)) {
                 return StepResult.back(null);
             }
@@ -426,6 +435,7 @@ public final class LoginFlow implements Listener {
                     continue;
                 }
             } else {
+                limiter.recordFailure(s.ipKey);
                 return StepResult.cancel();
             }
             break;
@@ -486,10 +496,10 @@ public final class LoginFlow implements Listener {
             if (!r.is(DialogFactory.SUBMIT)) {
                 return StepResult.cancel();
             }
-            CodeService.Check check = codes.verify(purpose, s.key, r.text("code").trim(), s.ip.getHostAddress());
+            CodeService.Check check = codes.verify(purpose, s.key, r.text("code").trim(), s.ipKey);
             if (check == CodeService.Check.WRONG || check == CodeService.Check.BURNED) {
                 // Wrong codes count against the IP like wrong passwords.
-                limiter.recordFailure(s.ip);
+                limiter.recordFailure(s.ipKey);
                 Component ban = banMessage(s);
                 if (ban != null) {
                     return StepResult.deny(ban);
@@ -522,7 +532,7 @@ public final class LoginFlow implements Listener {
         if (purpose == Purpose.REGISTER && s.registerSends >= MAX_REGISTER_SENDS_PER_CONNECTION) {
             return messages.get("error.too-many-codes");
         }
-        return codes.cooldownRemaining(purpose, s.key, s.ip.getHostAddress()).map(this::cooldownMessage).orElse(null);
+        return codes.cooldownRemaining(purpose, s.key, s.ipKey).map(this::cooldownMessage).orElse(null);
     }
 
     private Component cooldownMessage(Duration remaining) {
@@ -535,7 +545,7 @@ public final class LoginFlow implements Listener {
         if (purpose == Purpose.REGISTER && s.registerSends >= MAX_REGISTER_SENDS_PER_CONNECTION) {
             return SendResult.failed(messages.get("error.too-many-codes"));
         }
-        String ip = s.ip.getHostAddress();
+        String ip = s.ipKey;
         CodeService.Issue issue = codes.issue(purpose, s.key, ip);
         if (issue instanceof CodeService.CoolingDown wait) {
             return SendResult.failed(cooldownMessage(wait.remaining()));
@@ -591,7 +601,7 @@ public final class LoginFlow implements Listener {
 
     /** Counts one wrong password. Returns the disconnect message once a limit is reached. */
     private @Nullable Component recordFailure(Session s) {
-        limiter.recordFailure(s.ip);
+        limiter.recordFailure(s.ipKey);
         s.failures++;
         Component ban = banMessage(s);
         if (ban != null) {
@@ -605,12 +615,25 @@ public final class LoginFlow implements Listener {
 
     /** The disconnect message if this connection's IP is banned right now, else null. */
     private @Nullable Component banMessage(Session s) {
-        Optional<Duration> ban = limiter.banRemaining(s.ip);
+        Optional<Duration> ban = limiter.banRemaining(s.ipKey);
         if (ban.isEmpty()) {
             return null;
         }
         long minutes = Math.max(1, (ban.get().toSeconds() + 59) / 60);
         return messages.get("kick.ip-banned", Placeholder.unparsed("minutes", Long.toString(minutes)));
+    }
+
+    /**
+     * Like {@link #prompt} for dialogs that hold the name after the server password passed: idling until the
+     * timeout costs this IP a failure, so it cannot park a name for free.
+     */
+    private Response promptHolding(Session s, Function<String, Dialog> dialog) throws TimeoutException {
+        try {
+            return prompt(s, dialog);
+        } catch (TimeoutException e) {
+            limiter.recordFailure(s.ipKey);
+            throw e;
+        }
     }
 
     private Response prompt(Session s, Function<String, Dialog> dialog) throws TimeoutException {
