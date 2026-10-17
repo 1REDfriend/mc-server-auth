@@ -18,8 +18,12 @@ import io.papermc.paper.dialog.Dialog;
 import io.papermc.paper.event.connection.configuration.AsyncPlayerConnectionConfigureEvent;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
+import org.bukkit.Bukkit;
+import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.jspecify.annotations.Nullable;
 
@@ -46,6 +50,8 @@ import java.util.logging.Logger;
 public final class LoginFlow implements Listener {
     private static final int MAX_REGISTER_SENDS_PER_CONNECTION = 3;
     private static final long MAIL_SEND_TIMEOUT_SECONDS = 30;
+    /** How long a connection that passed the dialogs may take to reach PlayerJoinEvent. */
+    private static final Duration PASSED_TOKEN_LIFETIME = Duration.ofSeconds(30);
 
     private enum Step { DONE, BACK, CANCEL }
 
@@ -90,8 +96,15 @@ public final class LoginFlow implements Listener {
     private final Clock clock;
     private final Logger logger;
 
+    /** Proof that a connection passed the dialogs; consumed on PlayerJoinEvent. */
+    private record PassedToken(String nameKey, Instant expires) {}
+
+    /** Players who passed the flow and are in the world. Added on join, removed on quit. */
     private final Set<UUID> authenticated = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, PassedToken> passed = new ConcurrentHashMap<>();
     private final Set<String> inFlight = ConcurrentHashMap.newKeySet();
+    /** Lowercase names of players in the world, readable from any thread. */
+    private final Set<String> online = ConcurrentHashMap.newKeySet();
 
     public LoginFlow(AuthConfig config, Messages messages, DialogFactory dialogs, DialogWaiter waiter,
                      AccountStore store, PasswordHasher hasher, PasswordRules rules, AttemptLimiter limiter,
@@ -111,9 +124,17 @@ public final class LoginFlow implements Listener {
         this.logger = logger;
     }
 
-    /** True while a connection with this name is going through the login dialogs. */
+    /**
+     * True while a player with this name is in the world, is going through the login dialogs, or has just passed
+     * them and is on the way into the world. Thread-safe.
+     */
     public boolean isNameBusy(String name) {
-        return inFlight.contains(AccountStore.key(name));
+        String key = AccountStore.key(name);
+        if (inFlight.contains(key) || online.contains(key)) {
+            return true;
+        }
+        Instant now = clock.instant();
+        return passed.values().stream().anyMatch(t -> t.nameKey().equals(key) && now.isBefore(t.expires()));
     }
 
     @EventHandler
@@ -125,8 +146,8 @@ public final class LoginFlow implements Listener {
             connection.disconnect(messages.get("kick.unavailable"));
             return;
         }
-        if (authenticated.contains(id)) {
-            return; // reconfiguration of a player who already logged in
+        if (authenticated.contains(id) && Bukkit.getPlayer(id) != null) {
+            return; // reconfiguration of a player who already logged in and is in the world
         }
         String key = AccountStore.key(name);
         if (!inFlight.add(key)) {
@@ -140,7 +161,9 @@ public final class LoginFlow implements Listener {
             if (denial != null) {
                 connection.disconnect(denial);
             } else {
-                authenticated.add(id);
+                Instant now = clock.instant();
+                passed.values().removeIf(t -> !now.isBefore(t.expires()));
+                passed.put(id, new PassedToken(key, now.plus(PASSED_TOKEN_LIFETIME)));
                 connection.getAudience().closeDialog();
             }
         } catch (TimeoutException e) {
@@ -148,18 +171,40 @@ public final class LoginFlow implements Listener {
         } catch (SQLException e) {
             logger.log(Level.SEVERE, "Database error while logging in " + name, e);
             connection.disconnect(messages.get("kick.unavailable"));
-        } catch (RuntimeException e) {
+        } catch (Throwable e) {
+            // Includes Errors: never let an exception end the handler, which would let the player continue.
             logger.log(Level.SEVERE, "Unexpected error while logging in " + name, e);
-            connection.disconnect(messages.get("kick.unavailable"));
+            passed.remove(id);
+            try {
+                connection.disconnect(messages.get("kick.unavailable"));
+            } catch (Throwable disconnectError) {
+                logger.log(Level.SEVERE, "Could not disconnect " + name + " after an error", disconnectError);
+            }
         } finally {
             inFlight.remove(key);
             waiter.cancel(id);
         }
     }
 
+    /** Safety net: nobody reaches the world without a fresh pass from the configuration-phase flow. */
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onJoin(PlayerJoinEvent event) {
+        Player player = event.getPlayer();
+        UUID id = player.getUniqueId();
+        PassedToken token = passed.remove(id);
+        if (token == null || !clock.instant().isBefore(token.expires())) {
+            logger.warning("Kicking " + player.getName() + ": joined without passing the login flow");
+            player.kick(messages.get("kick.unavailable"));
+            return;
+        }
+        online.add(AccountStore.key(player.getName()));
+        authenticated.add(id);
+    }
+
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
         authenticated.remove(event.getPlayer().getUniqueId());
+        online.remove(AccountStore.key(event.getPlayer().getName()));
     }
 
     /** Returns null when the player may enter, otherwise the disconnect message. */

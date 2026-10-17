@@ -5,7 +5,6 @@ import dev.tongt.mcserverauth.security.AttemptLimiter;
 import dev.tongt.mcserverauth.storage.Account;
 import dev.tongt.mcserverauth.storage.AccountStore;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
-import org.bukkit.Bukkit;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.AsyncPlayerPreLoginEvent;
@@ -48,7 +47,8 @@ public final class PreLoginGuard implements Listener {
         }
 
         // In offline mode a second login with the same name would kick the real player. Refuse the newcomer.
-        if (Bukkit.getPlayerExact(name) != null || flow.isNameBusy(name)) {
+        // isNameBusy covers players in the world too; it is thread-safe, unlike Bukkit.getPlayerExact here.
+        if (flow.isNameBusy(name)) {
             event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER, messages.get("kick.name-in-use"));
             return;
         }
