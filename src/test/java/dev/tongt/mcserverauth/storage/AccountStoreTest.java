@@ -1,0 +1,88 @@
+package dev.tongt.mcserverauth.storage;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
+import java.sql.SQLException;
+import java.util.Optional;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+class AccountStoreTest {
+    @TempDir
+    Path dir;
+    private AccountStore store;
+
+    @BeforeEach
+    void open() throws SQLException {
+        store = AccountStore.open(dir.resolve("accounts.db"));
+    }
+
+    @AfterEach
+    void close() throws SQLException {
+        store.close();
+    }
+
+    @Test
+    void createAndFindIgnoringCase() throws SQLException {
+        store.create("Steve", "hash1", "steve@example.com", 1000L);
+        Account account = store.find("STEVE").orElseThrow();
+        assertEquals("steve", account.nameLower());
+        assertEquals("Steve", account.displayName());
+        assertEquals("hash1", account.passwordHash());
+        assertEquals("steve@example.com", account.email());
+        assertEquals(1000L, account.createdAt());
+        assertNull(account.lastLoginAt());
+    }
+
+    @Test
+    void missingAccountIsEmpty() throws SQLException {
+        assertEquals(Optional.empty(), store.find("nobody"));
+    }
+
+    @Test
+    void duplicateNameIsRejected() throws SQLException {
+        store.create("Steve", "hash1", "steve@example.com", 1000L);
+        assertThrows(SQLException.class, () -> store.create("steve", "hash2", "x@example.com", 2000L));
+    }
+
+    @Test
+    void updatePasswordAndRecordLogin() throws SQLException {
+        store.create("Steve", "hash1", "steve@example.com", 1000L);
+        assertTrue(store.updatePassword("steve", "hash2"));
+        store.recordLogin("Steve", 5000L, "127.0.0.1");
+        Account account = store.find("steve").orElseThrow();
+        assertEquals("hash2", account.passwordHash());
+        assertEquals(5000L, account.lastLoginAt());
+        assertEquals("127.0.0.1", account.lastIp());
+    }
+
+    @Test
+    void deleteAndCountByEmail() throws SQLException {
+        store.create("A", "h", "same@example.com", 1L);
+        store.create("B", "h", "same@example.com", 1L);
+        assertEquals(2, store.countByEmail("same@example.com"));
+        assertTrue(store.delete("a"));
+        assertFalse(store.delete("a"));
+        assertEquals(1, store.countByEmail("same@example.com"));
+    }
+
+    @Test
+    void serverPasswordHashRoundTrip() throws SQLException {
+        assertEquals(Optional.empty(), store.serverPasswordHash());
+        store.setServerPasswordHash("h1");
+        store.setServerPasswordHash("h2");
+        assertEquals(Optional.of("h2"), store.serverPasswordHash());
+    }
+
+    @Test
+    void dataSurvivesReopen() throws SQLException {
+        store.create("Steve", "hash1", "steve@example.com", 1000L);
+        store.close();
+        store = AccountStore.open(dir.resolve("accounts.db"));
+        assertTrue(store.find("steve").isPresent());
+    }
+}
