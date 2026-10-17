@@ -24,6 +24,26 @@ class EmailAddressTest {
     }
 
     @Test
+    void rejectsHeaderAndListTricks() {
+        assertEquals(Optional.empty(), EmailAddress.parse("\"x\"<v@evil.com>"));
+        assertEquals(Optional.empty(), EmailAddress.parse("a,b@c.com"));
+        assertEquals(Optional.empty(), EmailAddress.parse("a@b..com"));
+        assertEquals(Optional.empty(), EmailAddress.parse(".a@b.com"));
+        assertEquals(Optional.empty(), EmailAddress.parse("a.@b.com"));
+        assertEquals(Optional.empty(), EmailAddress.parse("a..b@c.com"));
+        assertEquals(Optional.empty(), EmailAddress.parse("a@-b.com"));
+        assertEquals(Optional.empty(), EmailAddress.parse("a@b-.com"));
+        assertEquals(Optional.empty(), EmailAddress.parse("a@b.c"));
+        assertEquals(Optional.empty(), EmailAddress.parse("a@b.c0m"));
+    }
+
+    @Test
+    void acceptsDottedPlusAddressWithSubdomain() {
+        assertEquals("first.last+tag@sub.example.co",
+                EmailAddress.parse("first.last+tag@sub.example.co").orElseThrow().value());
+    }
+
+    @Test
     void rejectsTooLong() {
         assertEquals(Optional.empty(), EmailAddress.parse("a".repeat(65) + "@example.com"));
         assertEquals(Optional.empty(), EmailAddress.parse("a@" + "b".repeat(250) + ".com"));

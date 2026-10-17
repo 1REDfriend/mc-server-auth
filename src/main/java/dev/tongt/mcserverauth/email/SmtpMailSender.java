@@ -5,6 +5,7 @@ import jakarta.mail.Message;
 import jakarta.mail.MessagingException;
 import jakarta.mail.Session;
 import jakarta.mail.Transport;
+import jakarta.mail.internet.AddressException;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
 
@@ -14,9 +15,11 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public final class SmtpMailSender implements MailSender {
     private static final String TIMEOUT_MILLIS = "10000";
+    private static final int MAIL_THREADS = 3;
 
     private final AuthConfig.Smtp smtp;
     private final ExecutorService executor;
@@ -25,7 +28,7 @@ public final class SmtpMailSender implements MailSender {
         this.smtp = smtp;
         // Jakarta Mail finds its SMTP provider through the context class loader, which must be the plugin's.
         ClassLoader pluginLoader = SmtpMailSender.class.getClassLoader();
-        this.executor = Executors.newSingleThreadExecutor(runnable -> {
+        this.executor = Executors.newFixedThreadPool(MAIL_THREADS, runnable -> {
             Thread thread = new Thread(runnable, "McServerAuth-mail");
             thread.setDaemon(true);
             thread.setContextClassLoader(pluginLoader);
@@ -76,7 +79,7 @@ public final class SmtpMailSender implements MailSender {
         }
         MimeMessage message = new MimeMessage(Session.getInstance(props));
         message.setFrom(new InternetAddress(smtp.from()));
-        message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(to, true));
+        message.setRecipient(Message.RecipientType.TO, bareAddress(to));
         message.setSubject(subject, "UTF-8");
         message.setText(body, "UTF-8");
         message.setSentDate(new Date());
@@ -87,8 +90,26 @@ public final class SmtpMailSender implements MailSender {
         }
     }
 
+    /** The recipient must be exactly one plain address: no display name, group or list. */
+    private static InternetAddress bareAddress(String to) throws AddressException {
+        InternetAddress address = new InternetAddress(to, true);
+        address.validate();
+        if (address.getPersonal() != null || address.isGroup() || !to.equals(address.getAddress())) {
+            throw new AddressException("Recipient must be a single plain address", to);
+        }
+        return address;
+    }
+
     @Override
     public void close() {
-        executor.shutdownNow();
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 }
