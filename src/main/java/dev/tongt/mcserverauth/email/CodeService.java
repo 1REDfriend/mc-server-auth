@@ -31,7 +31,7 @@ public final class CodeService {
 
     public sealed interface Issue permits Issued, CoolingDown {}
 
-    public record Issued(String code) implements Issue {}
+    public record Issued(String code, Instant issuedAt) implements Issue {}
 
     public record CoolingDown(Duration remaining) implements Issue {}
 
@@ -55,12 +55,16 @@ public final class CodeService {
         }
     }
 
+    /** What one issue() replaced, so a failed send can be undone exactly. */
+    private record Undo(Instant issuedAt, LiveCode previousLive, Instant previousLastSent) {}
+
     private final Clock clock;
     private final SecureRandom random;
     private final Duration validity;
     private final int maxAttempts;
     private final Map<Key, LiveCode> live = new HashMap<>();
     private final Map<Key, Instant> lastSent = new HashMap<>();
+    private final Map<Key, Undo> undo = new HashMap<>();
     private final Map<IpKey, Deque<Instant>> ipSends = new HashMap<>();
 
     public CodeService(Clock clock, SecureRandom random, Duration validity, int maxAttempts) {
@@ -87,25 +91,44 @@ public final class CodeService {
         String code = String.format("%06d", random.nextInt(1_000_000));
         byte[] salt = new byte[16];
         random.nextBytes(salt);
-        live.put(key, new LiveCode(salt, digest(salt, code), now.plus(validity)));
-        lastSent.put(key, now);
+        LiveCode previousLive = live.put(key, new LiveCode(salt, digest(salt, code), now.plus(validity)));
+        Instant previousLastSent = lastSent.put(key, now);
+        undo.put(key, new Undo(now, previousLive, previousLastSent));
         sends.addLast(now);
-        return new Issued(code);
+        return new Issued(code, now);
     }
 
-    /** Undo the last issue() when the email could not be sent, so it does not count against limits. */
-    public synchronized void cancelIssue(Purpose purpose, String subject, String ip) {
+    /**
+     * Undo one issue() whose email could not be sent: restores the code and cooldown it replaced and frees its
+     * IP slot. Does nothing if the issue was already undone, verified, or superseded by a later one.
+     */
+    public synchronized void cancelIssue(Purpose purpose, String subject, String ip, Issued issued) {
         Key key = new Key(purpose, subject);
-        live.remove(key);
-        lastSent.remove(key);
+        Undo saved = undo.get(key);
+        if (saved == null || !saved.issuedAt().equals(issued.issuedAt())
+                || !issued.issuedAt().equals(lastSent.get(key))) {
+            return;
+        }
+        undo.remove(key);
+        if (saved.previousLive() == null) {
+            live.remove(key);
+        } else {
+            live.put(key, saved.previousLive());
+        }
+        if (saved.previousLastSent() == null) {
+            lastSent.remove(key);
+        } else {
+            lastSent.put(key, saved.previousLastSent());
+        }
         Deque<Instant> sends = ipSends.get(new IpKey(purpose, ip));
         if (sends != null) {
-            sends.pollLast();
+            sends.removeLastOccurrence(issued.issuedAt());
         }
     }
 
     public synchronized Check verify(Purpose purpose, String subject, String code) {
         Key key = new Key(purpose, subject);
+        String attempt = code == null ? "" : code;
         LiveCode liveCode = live.get(key);
         if (liveCode == null) {
             return Check.NONE;
@@ -114,8 +137,9 @@ public final class CodeService {
             live.remove(key);
             return Check.NONE;
         }
-        if (MessageDigest.isEqual(liveCode.hash, digest(liveCode.salt, code))) {
+        if (MessageDigest.isEqual(liveCode.hash, digest(liveCode.salt, attempt))) {
             live.remove(key);
+            undo.remove(key);
             return Check.OK;
         }
         liveCode.wrongAttempts++;
@@ -133,6 +157,7 @@ public final class CodeService {
 
     public synchronized void invalidate(String subject) {
         live.keySet().removeIf(key -> key.subject().equals(subject));
+        undo.keySet().removeIf(key -> key.subject().equals(subject));
     }
 
     private static byte[] digest(byte[] salt, String code) {

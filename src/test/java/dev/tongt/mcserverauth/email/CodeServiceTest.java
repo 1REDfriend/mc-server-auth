@@ -19,7 +19,11 @@ class CodeServiceTest {
     private final CodeService codes = new CodeService(clock, new SecureRandom(), Duration.ofMinutes(15), 5);
 
     private String issue(Purpose purpose, String subject) {
-        return assertInstanceOf(Issued.class, codes.issue(purpose, subject, IP)).code();
+        return issued(purpose, subject).code();
+    }
+
+    private Issued issued(Purpose purpose, String subject) {
+        return assertInstanceOf(Issued.class, codes.issue(purpose, subject, IP));
     }
 
     @Test
@@ -88,10 +92,48 @@ class CodeServiceTest {
 
     @Test
     void cancelIssueRefundsTheSend() {
-        issue(Purpose.RESET, "steve");
-        codes.cancelIssue(Purpose.RESET, "steve", IP);
+        Issued issued = issued(Purpose.RESET, "steve");
+        codes.cancelIssue(Purpose.RESET, "steve", IP, issued);
         assertFalse(codes.hasLiveCode(Purpose.RESET, "steve"));
         issue(Purpose.RESET, "steve");
+    }
+
+    @Test
+    void cancelIssueFreesTheIpSlot() {
+        issue(Purpose.RESET, "a");
+        issue(Purpose.RESET, "b");
+        Issued c = issued(Purpose.RESET, "c");
+        codes.cancelIssue(Purpose.RESET, "c", IP, c);
+        issue(Purpose.RESET, "d");
+    }
+
+    @Test
+    void failedResendRestoresThePreviousCode() {
+        String a = issue(Purpose.REGISTER, "steve");
+        clock.advance(Duration.ofSeconds(60));
+        Issued b = issued(Purpose.REGISTER, "steve");
+        codes.cancelIssue(Purpose.REGISTER, "steve", IP, b);
+        assertEquals(Check.OK, codes.verify(Purpose.REGISTER, "steve", a));
+    }
+
+    @Test
+    void staleOrRepeatedCancelIsANoOp() {
+        Issued a = issued(Purpose.REGISTER, "steve");
+        clock.advance(Duration.ofSeconds(60));
+        Issued b = issued(Purpose.REGISTER, "steve");
+        codes.cancelIssue(Purpose.REGISTER, "steve", IP, a);
+        assertEquals(Check.OK, codes.verify(Purpose.REGISTER, "steve", b.code()));
+
+        Issued c = issued(Purpose.RESET, "alex");
+        codes.cancelIssue(Purpose.RESET, "alex", IP, c);
+        codes.cancelIssue(Purpose.RESET, "alex", IP, c);
+        assertFalse(codes.hasLiveCode(Purpose.RESET, "alex"));
+    }
+
+    @Test
+    void nullCodeDoesNotThrow() {
+        issue(Purpose.RESET, "steve");
+        assertEquals(Check.WRONG, codes.verify(Purpose.RESET, "steve", null));
     }
 
     @Test

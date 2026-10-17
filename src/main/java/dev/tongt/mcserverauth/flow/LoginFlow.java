@@ -358,7 +358,8 @@ public final class LoginFlow implements Listener {
             long seconds = Math.max(1, (wait.remaining().toMillis() + 999) / 1000);
             return messages.get("error.code-cooldown", Placeholder.unparsed("seconds", Long.toString(seconds)));
         }
-        String code = ((CodeService.Issued) issue).code();
+        CodeService.Issued issued = (CodeService.Issued) issue;
+        String code = issued.code();
         Map<String, String> vars = Map.of(
                 "name", s.name,
                 "code", code,
@@ -370,11 +371,11 @@ public final class LoginFlow implements Listener {
             mail.send(email.value(), subject, body).get(MAIL_SEND_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         } catch (ExecutionException | TimeoutException e) {
             logger.log(Level.WARNING, "Could not send " + purpose + " email for " + s.name, e);
-            codes.cancelIssue(purpose, s.key, ip);
+            codes.cancelIssue(purpose, s.key, ip, issued);
             return messages.get("error.email-send-failed");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            codes.cancelIssue(purpose, s.key, ip);
+            codes.cancelIssue(purpose, s.key, ip, issued);
             return messages.get("error.email-send-failed");
         }
         if (register) {
