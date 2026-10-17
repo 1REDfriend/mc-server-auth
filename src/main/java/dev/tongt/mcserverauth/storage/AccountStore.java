@@ -45,7 +45,7 @@ public final class AccountStore implements AutoCloseable {
                       last_login_at INTEGER,
                       last_ip       TEXT
                     )""");
-            statement.execute("CREATE INDEX IF NOT EXISTS accounts_email ON accounts(email)");
+            statement.execute("CREATE INDEX IF NOT EXISTS accounts_email ON accounts(email COLLATE NOCASE)");
             statement.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
         } catch (SQLException e) {
             connection.close();
@@ -108,7 +108,7 @@ public final class AccountStore implements AutoCloseable {
     }
 
     public synchronized int countByEmail(String email) throws SQLException {
-        try (PreparedStatement ps = connection.prepareStatement("SELECT COUNT(*) FROM accounts WHERE email = ?")) {
+        try (PreparedStatement ps = connection.prepareStatement("SELECT COUNT(*) FROM accounts WHERE email = ? COLLATE NOCASE")) {
             ps.setString(1, email);
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();

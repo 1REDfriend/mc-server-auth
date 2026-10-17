@@ -71,6 +71,13 @@ class AccountStoreTest {
     }
 
     @Test
+    void countByEmailIgnoresCase() throws SQLException {
+        store.create("A", "h", "Same@example.com", 1L);
+        store.create("B", "h", "same@example.com", 1L);
+        assertEquals(2, store.countByEmail("SAME@example.com"));
+    }
+
+    @Test
     void serverPasswordHashRoundTrip() throws SQLException {
         assertEquals(Optional.empty(), store.serverPasswordHash());
         store.setServerPasswordHash("h1");
