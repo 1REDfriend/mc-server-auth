@@ -22,7 +22,8 @@ Design: `docs/superpowers/specs/2026-10-17-mc-server-auth-design.md`
 ```powershell
 .\gradlew.bat build
 ```
-The plugin jar is `build\libs\mc-server-auth-0.1.0.jar`.
+The plugin jar is `build\libs\mc-server-auth-0.1.0.jar`. It bundles bcrypt (relocated) and Jakarta Mail, so the
+server needs no internet access to load it.
 
 ## Run the local test server
 
@@ -41,6 +42,9 @@ The generated server password is printed once in the server console.
 2. Copy the generated server password from the console, or set your own with `/authadmin setserverpassword`.
 3. Fill `email.smtp` in `plugins/McServerAuth/config.yml` (for Gmail: `smtp.gmail.com`, port 587, `starttls`, an App Password). Without SMTP, new players cannot register.
 4. Restart.
+
+> **Warning:** if McServerAuth is not enabled (check `/plugins` after every server or plugin update), the offline-mode
+> server is open to anyone under any name. If you are unsure, keep `white-list=true` as a backstop.
 
 ## Commands
 
