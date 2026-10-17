@@ -247,10 +247,15 @@ is verified. Plaintext passwords and codes are never stored or logged.
 - First start with no `server_password_hash`: the plugin generates a random
   12-character password, stores its hash, and prints the plaintext **once** to the
   console with a notice to change it.
-- `/authadmin setserverpassword` run by a player opens a dialog (password + confirm),
-  so the password never appears in a command line or log.
-- From the console: `authadmin setserverpassword <password>` is accepted, with a
+- `/authadmin setserverpassword` run by a player always opens a dialog (password +
+  confirm), so the password never appears in a command line or log. If the player
+  typed arguments anyway, they are ignored and the player is told they may be in the
+  server log.
+- From the console only: `authadmin setserverpassword <password>` is accepted, with a
   warning that the console log records it.
+- A player can have only one of these dialogs (`/changepassword`,
+  `/authadmin setserverpassword`) open at a time; running either again while one is
+  open is refused with "Finish or cancel the open dialog first."
 - Changing the server password does not affect players already online.
 
 ## Commands and permissions
@@ -259,7 +264,7 @@ is verified. Plaintext passwords and codes are never stored or logged.
 |---|---|---|---|
 | `/changepassword` | player | `mcserverauth.changepassword` (default: true) | dialog: current, new, confirm |
 | `/authadmin reset <name>` | admin / console | `mcserverauth.admin` (default: op) | deletes the account (password and email); next join registers again. Kicks the player if online. Clears their session-cache entries and live codes. |
-| `/authadmin setserverpassword` | admin / console | `mcserverauth.admin` | see bootstrap section |
+| `/authadmin setserverpassword [password]` | admin / console | `mcserverauth.admin` | players get a dialog; `[password]` is console-only (see bootstrap section) |
 | `/authadmin info <name>` | admin / console | `mcserverauth.admin` | shows display name, full email, created / last login time, last IP |
 
 ## Config (`config.yml`)
@@ -321,10 +326,18 @@ ignore this email."
 
 - Database error during the flow → disconnect with a generic "login unavailable,
   try again" message; full error to the server log.
-- Plugin cannot open the database, or `config.yml` is invalid, at startup → log the
-  error and switch to lockdown: the plugin stays enabled with only a listener that
-  refuses every login (fail closed, never fail open; disabling the plugin would let
-  everyone in).
+- Any unexpected failure during startup (unreadable or syntactically invalid
+  `config.yml`, invalid values, database errors, or any other exception) → unregister
+  every listener the plugin added, log the error, and switch to lockdown: the plugin
+  stays enabled with only a listener (priority HIGHEST) that refuses every login (fail
+  closed, never fail open; an exception escaping `onEnable` makes Paper disable the
+  plugin and drop its listeners, which would let everyone in). `config.yml` is parsed
+  directly rather than through `getConfig()`, which would log a syntax error and
+  silently use defaults. Loading `messages.yml` never fails: an unreadable file falls
+  back to the bundled one, and keys missing from an older file fall back to the
+  bundled English text.
+- Unexpected runtime errors in the command dialogs and async admin tasks → logged at
+  SEVERE, the dialog is closed, and the sender sees "Something went wrong".
 - SMTP errors → see "When SMTP is not configured".
 - Unknown or stale dialog response (no waiting connection) → ignored.
 - Player disconnects mid-flow → the waiting future is completed and cleaned up;
