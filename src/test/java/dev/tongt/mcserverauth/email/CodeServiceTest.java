@@ -131,6 +131,17 @@ class CodeServiceTest {
     }
 
     @Test
+    void staleCancelInTheSameInstantDoesNotUndoANewerIssue() {
+        // The clock never moves: both issues share one Instant.
+        Issued a = issued(Purpose.REGISTER, "steve");
+        codes.cancelIssue(Purpose.REGISTER, "steve", IP, a);
+        Issued b = issued(Purpose.REGISTER, "steve");
+        codes.cancelIssue(Purpose.REGISTER, "steve", IP, a);
+        assertTrue(codes.hasLiveCode(Purpose.REGISTER, "steve"));
+        assertEquals(Check.OK, codes.verify(Purpose.REGISTER, "steve", b.code()));
+    }
+
+    @Test
     void nullCodeDoesNotThrow() {
         issue(Purpose.RESET, "steve");
         assertEquals(Check.WRONG, codes.verify(Purpose.RESET, "steve", null));

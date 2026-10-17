@@ -56,7 +56,7 @@ public final class CodeService {
     }
 
     /** What one issue() replaced, so a failed send can be undone exactly. */
-    private record Undo(Instant issuedAt, LiveCode previousLive, Instant previousLastSent) {}
+    private record Undo(Issued issued, LiveCode previousLive, Instant previousLastSent) {}
 
     private final Clock clock;
     private final SecureRandom random;
@@ -93,9 +93,10 @@ public final class CodeService {
         random.nextBytes(salt);
         LiveCode previousLive = live.put(key, new LiveCode(salt, digest(salt, code), now.plus(validity)));
         Instant previousLastSent = lastSent.put(key, now);
-        undo.put(key, new Undo(now, previousLive, previousLastSent));
+        Issued issued = new Issued(code, now);
+        undo.put(key, new Undo(issued, previousLive, previousLastSent));
         sends.addLast(now);
-        return new Issued(code, now);
+        return issued;
     }
 
     /**
@@ -105,8 +106,8 @@ public final class CodeService {
     public synchronized void cancelIssue(Purpose purpose, String subject, String ip, Issued issued) {
         Key key = new Key(purpose, subject);
         Undo saved = undo.get(key);
-        if (saved == null || !saved.issuedAt().equals(issued.issuedAt())
-                || !issued.issuedAt().equals(lastSent.get(key))) {
+        // Identity, not equality: two issues in the same instant (or with the same code) must not match.
+        if (saved == null || saved.issued() != issued) {
             return;
         }
         undo.remove(key);

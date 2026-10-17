@@ -78,6 +78,25 @@ class AccountStoreTest {
     }
 
     @Test
+    void createIfEmailBelowRespectsTheLimitIgnoringCase() throws SQLException {
+        assertTrue(store.createIfEmailBelow("A", "h", "Same@example.com", 1L, 2));
+        assertTrue(store.createIfEmailBelow("B", "h", "same@example.com", 1L, 2));
+        assertFalse(store.createIfEmailBelow("C", "h", "SAME@example.com", 1L, 2));
+        assertTrue(store.find("c").isEmpty());
+        assertEquals(2, store.countByEmail("same@example.com"));
+        assertTrue(store.createIfEmailBelow("D", "h", "other@example.com", 1L, 2));
+    }
+
+    @Test
+    void createIfEmailBelowRejectsDuplicateNameAndStaysUsable() throws SQLException {
+        assertTrue(store.createIfEmailBelow("Steve", "h", "a@example.com", 1L, 3));
+        assertThrows(SQLException.class, () -> store.createIfEmailBelow("steve", "h", "b@example.com", 1L, 3));
+        assertEquals(0, store.countByEmail("b@example.com"));
+        store.create("Alex", "h", "c@example.com", 1L);
+        assertTrue(store.find("alex").isPresent());
+    }
+
+    @Test
     void serverPasswordHashRoundTrip() throws SQLException {
         assertEquals(Optional.empty(), store.serverPasswordHash());
         store.setServerPasswordHash("h1");

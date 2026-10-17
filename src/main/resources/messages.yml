@@ -56,6 +56,7 @@ error:
   code-cooldown: "<red>A code was sent recently. Try again in <seconds> seconds."
   too-many-codes: "<red>Too many codes requested. Reconnect and try again later."
   email-send-failed: "<red>Could not send the email. Try again later."
+  email-slow: "<yellow>The email is taking a while. Check your inbox in a minute; you can also press Resend later."
   reset-unavailable: "<red>Password reset is unavailable. Contact an admin."
   no-live-code: "<red>No valid code for this account. Ask for a new one."
 info:

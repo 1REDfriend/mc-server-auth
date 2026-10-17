@@ -81,6 +81,31 @@ public final class AccountStore implements AutoCloseable {
         }
     }
 
+    /**
+     * Creates the account only if fewer than {@code limit} accounts use this email (ignoring case). The count and
+     * the insert run in one transaction under this store's lock, so concurrent registrations cannot both pass.
+     *
+     * @return false, with nothing written, when the email already has {@code limit} accounts
+     */
+    public synchronized boolean createIfEmailBelow(String displayName, String passwordHash, String email, long now,
+                                                   int limit) throws SQLException {
+        connection.setAutoCommit(false);
+        try {
+            if (countByEmail(email) >= limit) {
+                connection.rollback();
+                return false;
+            }
+            create(displayName, passwordHash, email, now);
+            connection.commit();
+            return true;
+        } catch (SQLException | RuntimeException e) {
+            connection.rollback();
+            throw e;
+        } finally {
+            connection.setAutoCommit(true);
+        }
+    }
+
     public synchronized boolean updatePassword(String name, String passwordHash) throws SQLException {
         try (PreparedStatement ps = connection.prepareStatement(
                 "UPDATE accounts SET password_hash = ? WHERE name_lower = ?")) {
