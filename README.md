@@ -240,6 +240,18 @@ Windows PowerShell scripts set up a throwaway test environment on your machine:
 | 34127 | Local Paper test server (127.0.0.1 only) |
 | 41853 | Mailpit SMTP |
 | 41854 | Mailpit web inbox |
+| 37481 | End-to-end bot test server (127.0.0.1 only) |
+
+### End-to-end tests
+
+`dev/bot/` holds a headless Minecraft client that joins a throwaway Paper server, clicks through the dialogs, and checks the results in the dialogs, chat, `accounts.db`, the Mailpit inbox, and the secret input log. It needs Python 3.10+ and nothing else; run the two scripts above once first so `run\paper.jar`, the EULA, and Mailpit exist.
+
+```powershell
+python dev\bot\run_tests.py            # builds the plugin, then runs every mode
+python dev\bot\run_tests.py legacy     # one mode: smtp, nosmtp, legacy, badfrom
+```
+
+It runs from its own `run-bot\` folder on port 37481, so it never touches the manual test server. See [`dev/bot/README.md`](dev/bot/README.md).
 
 Design notes and the implementation plan are in [`docs/superpowers/`](docs/superpowers/).
 

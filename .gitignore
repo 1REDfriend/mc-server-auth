@@ -1,5 +1,7 @@
 run/
+run-bot/
 build/
 .gradle/
 *.db
 tools/
+__pycache__/
