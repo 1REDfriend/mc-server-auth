@@ -22,7 +22,9 @@ public final class CodeService {
 
     public enum Purpose {
         REGISTER(Duration.ofSeconds(60), 5),
-        RESET(Duration.ofMinutes(15), 3);
+        RESET(Duration.ofMinutes(15), 3),
+        /** Adding or changing the email of an account, from /email. */
+        CHANGE_EMAIL(Duration.ofSeconds(60), 5);
 
         private final Duration cooldown;
         private final int sendsPerIpPerHour;

@@ -1,12 +1,16 @@
 package dev.tongt.mcserverauth;
 
+import dev.tongt.mcserverauth.audit.SecretInputListener;
+import dev.tongt.mcserverauth.audit.SecretInputLog;
 import dev.tongt.mcserverauth.command.AuthAdminCommand;
 import dev.tongt.mcserverauth.command.ChangePasswordCommand;
+import dev.tongt.mcserverauth.command.EmailCommand;
 import dev.tongt.mcserverauth.config.AuthConfig;
 import dev.tongt.mcserverauth.config.Messages;
 import dev.tongt.mcserverauth.email.CodeService;
 import dev.tongt.mcserverauth.email.MailSender;
 import dev.tongt.mcserverauth.email.SmtpMailSender;
+import dev.tongt.mcserverauth.flow.CodeMailer;
 import dev.tongt.mcserverauth.flow.DialogFactory;
 import dev.tongt.mcserverauth.flow.DialogWaiter;
 import dev.tongt.mcserverauth.flow.LoginFlow;
@@ -44,6 +48,7 @@ public final class McServerAuthPlugin extends JavaPlugin {
     private AccountStore store;
     private MailSender mail;
     private DialogWaiter waiter;
+    private SecretInputLog secretInputLog;
 
     @Override
     public void onEnable() {
@@ -87,21 +92,32 @@ public final class McServerAuthPlugin extends JavaPlugin {
         CodeService codes = new CodeService(clock, random, config.codeValidity(), config.codeMaxAttempts());
         mail = new SmtpMailSender(config.smtp());
         if (!mail.available()) {
-            getLogger().warning("SMTP is not configured (email.smtp in config.yml). New registrations and password resets are refused.");
+            getLogger().warning("SMTP is not configured (email.smtp in config.yml). Players register without an email,"
+                    + " and only an admin can reset a password (/authadmin reset).");
         }
 
         waiter = new DialogWaiter();
         DialogFactory dialogs = new DialogFactory(messages, config.passwordMaxLength());
+        CodeMailer mailer = new CodeMailer(config, messages, codes, mail, getLogger());
         LoginFlow flow = new LoginFlow(config, messages, dialogs, waiter, store, hasher, rules, limiter,
-                sessions, codes, mail, clock, getLogger());
+                sessions, codes, mailer, clock, getLogger());
 
         var plugins = getServer().getPluginManager();
+        if (config.secretInputLogEnabled()) {
+            secretInputLog = new SecretInputLog(new File(getDataFolder(), "secret-input-logs").toPath(), clock,
+                    config.secretInputLogKeepDays());
+            plugins.registerEvents(new SecretInputListener(secretInputLog, getLogger()), this);
+            getLogger().warning("secret-input-log is ON: every dialog input, real passwords included, is written"
+                    + " (base64, not encrypted) to plugins/McServerAuth/secret-input-logs/. Turn it off when done.");
+        }
         plugins.registerEvents(waiter, this);
         plugins.registerEvents(flow, this);
         plugins.registerEvents(new PreLoginGuard(messages, limiter, store, flow, getLogger()), this);
 
         registerCommand("changepassword", "Change your personal password",
                 new ChangePasswordCommand(config, messages, dialogs, waiter, store, hasher, rules, sessions, getLogger()));
+        registerCommand("email", "Add or change the email used to reset your password",
+                new EmailCommand(config, messages, dialogs, waiter, store, hasher, codes, mailer, getLogger()));
         registerCommand("authadmin", "Manage McServerAuth accounts",
                 new AuthAdminCommand(this, config, messages, dialogs, waiter, store, hasher, rules, sessions, codes));
     }
@@ -110,6 +126,9 @@ public final class McServerAuthPlugin extends JavaPlugin {
     public void onDisable() {
         if (waiter != null) {
             waiter.cancelAll();
+        }
+        if (secretInputLog != null) {
+            secretInputLog.close();
         }
         if (mail != null) {
             mail.close();

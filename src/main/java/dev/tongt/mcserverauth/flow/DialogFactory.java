@@ -53,11 +53,16 @@ public final class DialogFactory {
                 List.of(button("button.submit", SUBMIT), button("button.cancel", CANCEL)), false);
     }
 
-    public Function<String, Dialog> register(@Nullable Component error) {
-        return build("dialog.register.title", body("dialog.register.body", error),
-                List.of(password("password", "input.password"), password("confirm", "input.confirm"),
-                        text("email", "input.email", EMAIL_MAX_LENGTH)),
-                List.of(button("button.submit", SUBMIT), button("button.cancel", CANCEL)), false);
+    /** @param withEmail show the optional email field; false when the server cannot send email */
+    public Function<String, Dialog> register(@Nullable Component error, boolean withEmail) {
+        List<DialogInput> inputs = new ArrayList<>(
+                List.of(password("password", "input.password"), password("confirm", "input.confirm")));
+        if (withEmail) {
+            inputs.add(text("email", "input.email-optional", EMAIL_MAX_LENGTH));
+        }
+        return build("dialog.register.title",
+                body(withEmail ? "dialog.register.body" : "dialog.register.body-no-email", error),
+                inputs, List.of(button("button.submit", SUBMIT), button("button.cancel", CANCEL)), false);
     }
 
     public Function<String, Dialog> login(@Nullable Component error) {
@@ -97,6 +102,16 @@ public final class DialogFactory {
         return build("dialog.change-password.title", error == null ? List.of() : List.of(DialogBody.plainMessage(error)),
                 List.of(password("current", "input.current-password"), password("password", "input.new-password"),
                         password("confirm", "input.confirm")),
+                List.of(button("button.submit", SUBMIT), button("button.cancel", CANCEL)), true);
+    }
+
+    /** /email: current password plus the address to add. @param currentMasked null when no email is set yet */
+    public Function<String, Dialog> setEmail(@Nullable String currentMasked, @Nullable Component error) {
+        List<DialogBody> body = currentMasked == null
+                ? body("dialog.set-email.body-none", error)
+                : body("dialog.set-email.body", error, email(currentMasked));
+        return build("dialog.set-email.title", body,
+                List.of(password("current", "input.current-password"), text("email", "input.new-email", EMAIL_MAX_LENGTH)),
                 List.of(button("button.submit", SUBMIT), button("button.cancel", CANCEL)), true);
     }
 

@@ -1,5 +1,8 @@
 package dev.tongt.mcserverauth.config;
 
+import dev.tongt.mcserverauth.email.EmailAddress;
+import jakarta.mail.internet.AddressException;
+import jakarta.mail.internet.InternetAddress;
 import org.bukkit.configuration.ConfigurationSection;
 
 import java.time.Duration;
@@ -19,7 +22,9 @@ public record AuthConfig(
         int maxAccountsPerEmail,
         Duration codeValidity,
         int codeMaxAttempts,
-        Smtp smtp) {
+        Smtp smtp,
+        boolean secretInputLogEnabled,
+        int secretInputLogKeepDays) {
 
     public enum Security { STARTTLS, SSL, NONE }
 
@@ -42,13 +47,7 @@ public record AuthConfig(
         if (smtpPort > 65535) {
             throw new IllegalArgumentException("email.smtp.port must be 65535 or less");
         }
-        boolean rememberEnabled = false;
-        if (c.contains("session-remember.enabled")) {
-            if (!c.isBoolean("session-remember.enabled")) {
-                throw new IllegalArgumentException("session-remember.enabled must be true or false");
-            }
-            rememberEnabled = c.getBoolean("session-remember.enabled");
-        }
+        boolean rememberEnabled = flag(c, "session-remember.enabled");
         Smtp smtp = new Smtp(
                 c.getString("email.smtp.host", "").trim(),
                 smtpPort,
@@ -56,6 +55,9 @@ public record AuthConfig(
                 c.getString("email.smtp.username", ""),
                 c.getString("email.smtp.password", ""),
                 c.getString("email.smtp.from", "").trim());
+        if (!smtp.from().isEmpty()) {
+            checkFrom(smtp.from());
+        }
         return new AuthConfig(
                 atMost(c, "max-attempts-per-connection", 20),
                 positive(c, "ip-ban.failures"),
@@ -70,7 +72,34 @@ public record AuthConfig(
                 positive(c, "email.max-accounts-per-email"),
                 minutes(c, "email.code-valid-minutes"),
                 atMost(c, "email.code-max-attempts", 10),
-                smtp);
+                smtp,
+                flag(c, "secret-input-log.enabled"),
+                positive(c, "secret-input-log.keep-days"));
+    }
+
+    /** An optional switch that is off when missing. */
+    private static boolean flag(ConfigurationSection c, String path) {
+        if (!c.contains(path)) {
+            return false;
+        }
+        if (!c.isBoolean(path)) {
+            throw new IllegalArgumentException(path + " must be true or false");
+        }
+        return c.getBoolean(path);
+    }
+
+    /** The sender must hold a real address, either bare or as "Name <address>"; a name alone fails every send. */
+    private static void checkFrom(String from) {
+        String address;
+        try {
+            address = new InternetAddress(from, true).getAddress();
+        } catch (AddressException e) {
+            address = null;
+        }
+        if (address == null || EmailAddress.parse(address).isEmpty()) {
+            throw new IllegalArgumentException(
+                    "email.smtp.from must be an email address, e.g. \"My Server <noreply@example.com>\"");
+        }
     }
 
     private static Security security(String raw) {

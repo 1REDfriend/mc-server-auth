@@ -37,6 +37,26 @@ class AuthConfigTest {
         assertEquals(Duration.ofMinutes(15), config.codeValidity());
         assertEquals(AuthConfig.Security.STARTTLS, config.smtp().security());
         assertFalse(config.smtp().configured());
+        assertFalse(config.secretInputLogEnabled());
+        assertEquals(7, config.secretInputLogKeepDays());
+    }
+
+    @Test
+    void secretInputLogEnabledMustBeABoolean() {
+        YamlConfiguration yaml = defaults();
+        yaml.set("secret-input-log.enabled", "yes");
+        var e = assertThrows(IllegalArgumentException.class, () -> AuthConfig.from(yaml));
+        assertTrue(e.getMessage().contains("secret-input-log.enabled"));
+        yaml.set("secret-input-log.enabled", true);
+        assertTrue(AuthConfig.from(yaml).secretInputLogEnabled());
+    }
+
+    @Test
+    void secretInputLogKeepDaysMustBePositive() {
+        YamlConfiguration yaml = defaults();
+        yaml.set("secret-input-log.keep-days", 0);
+        var e = assertThrows(IllegalArgumentException.class, () -> AuthConfig.from(yaml));
+        assertTrue(e.getMessage().contains("secret-input-log.keep-days"));
     }
 
     @Test
@@ -95,6 +115,27 @@ class AuthConfigTest {
         yaml.set("email.smtp.host", "127.0.0.1");
         assertFalse(AuthConfig.from(yaml).smtp().configured());
         yaml.set("email.smtp.from", "Test <noreply@example.test>");
+        assertTrue(AuthConfig.from(yaml).smtp().configured());
+    }
+
+    @Test
+    void rejectsFromWithoutAnAddress() {
+        YamlConfiguration yaml = defaults();
+        yaml.set("email.smtp.host", "127.0.0.1");
+        for (String from : new String[] {"LAB306 - TOP CRAFT Server", "noreply", "My Server <noreply>"}) {
+            yaml.set("email.smtp.from", from);
+            var e = assertThrows(IllegalArgumentException.class, () -> AuthConfig.from(yaml), from);
+            assertTrue(e.getMessage().contains("email.smtp.from"), from);
+        }
+    }
+
+    @Test
+    void acceptsPlainOrNamedFrom() {
+        YamlConfiguration yaml = defaults();
+        yaml.set("email.smtp.host", "127.0.0.1");
+        yaml.set("email.smtp.from", "noreply@example.test");
+        assertTrue(AuthConfig.from(yaml).smtp().configured());
+        yaml.set("email.smtp.from", "LAB306 - TOP CRAFT Server <noreply@example.test>");
         assertTrue(AuthConfig.from(yaml).smtp().configured());
     }
 

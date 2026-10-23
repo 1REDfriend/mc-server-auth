@@ -6,7 +6,8 @@ dialog:
     body: "This server is private. Enter the server password to continue."
   register:
     title: "Create your account"
-    body: "First time here. Choose a personal password and enter your email. We send a code to confirm the email. Do not reuse a password from another account."
+    body: "First time here. Choose a personal password. Email is optional: add one to reset a forgotten password yourself (we send a code to confirm it). Without one, only an admin can reset your password. Do not reuse a password from another account."
+    body-no-email: "First time here. Choose a personal password. If you forget it, an admin can reset it. Do not reuse a password from another account."
   verify-email:
     title: "Confirm your email"
     body: "We sent a 6-digit code to <email>. Enter it below."
@@ -25,13 +26,18 @@ dialog:
     title: "Change password"
   set-server-password:
     title: "Set server password"
+  set-email:
+    title: "Email"
+    body: "Your email is <email>. Enter your password and a new email. We send a code to confirm it."
+    body-none: "No email is linked yet. Add one to reset a forgotten password yourself. Enter your password and your email; we send a code to confirm it."
 input:
   password: "Password"
   confirm: "Confirm password"
-  email: "Email"
+  email-optional: "Email (optional)"
   code: "6-digit code"
   current-password: "Current password"
   new-password: "New password"
+  new-email: "Email"
 button:
   submit: "Continue"
   login: "Log in"
@@ -51,6 +57,7 @@ error:
   password-same-as-server: "<red>Your password must be different from the server password."
   email-invalid: "<red>That email address does not look right."
   email-limit: "<red>Too many accounts already use this email."
+  email-same: "<red>That is already your email."
   code-wrong: "<red>Wrong code."
   code-expired: "<red>That code is no longer valid. Ask for a new one."
   code-cooldown: "<red>A code was sent recently. Try again in <seconds> seconds."
@@ -58,6 +65,7 @@ error:
   email-send-failed: "<red>Could not send the email. Try again later."
   email-slow: "<yellow>The email is taking a while. Check your inbox in a minute; you can also press Resend later."
   reset-unavailable: "<red>Password reset is unavailable. Contact an admin."
+  reset-no-email: "<red>No email is linked to this account. Ask an admin to reset it, or add one with /email after you log in."
   no-live-code: "<red>No valid code for this account. Ask for a new one."
 info:
   code-resent: "<green>A new code was sent."
@@ -70,12 +78,13 @@ kick:
   too-many-connections: "Too many connections from your address. Try again shortly."
   wrong-case: "This account is registered as <name>. Use exactly that name, including capital letters."
   unavailable: "Login is unavailable right now. Try again later."
-  registration-unavailable: "Registration is unavailable. Contact an admin."
   account-reset: "Your account was reset by an admin. Reconnect to register again."
   lockdown: "Login system unavailable. Contact an admin."
 command:
   players-only: "<red>Only players can use this command."
   password-changed: "<green>Your password was changed."
+  email-set: "<green>Your email was saved. You can now reset your password with it."
+  email-unavailable: "<red>This server cannot send email, so no email can be added. Ask an admin if you forget your password."
   usage: "<yellow>/authadmin reset <name> | /authadmin setserverpassword [password] | /authadmin info <name>"
   reset-done: "<green>Account <name> was reset."
   no-such-account: "<red>No account named <name>."

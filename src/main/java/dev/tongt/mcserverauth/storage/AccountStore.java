@@ -106,6 +106,45 @@ public final class AccountStore implements AutoCloseable {
         }
     }
 
+    public enum EmailUpdate { OK, LIMIT, NO_ACCOUNT }
+
+    /**
+     * Sets the account's email if fewer than {@code limit} other accounts use it (ignoring case). Like
+     * {@link #createIfEmailBelow}, the count and the update are one transaction under this store's lock.
+     */
+    public synchronized EmailUpdate updateEmailIfBelow(String name, String email, int limit) throws SQLException {
+        connection.setAutoCommit(false);
+        try {
+            int others;
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "SELECT COUNT(*) FROM accounts WHERE email = ? COLLATE NOCASE AND name_lower <> ?")) {
+                ps.setString(1, email);
+                ps.setString(2, key(name));
+                try (ResultSet rs = ps.executeQuery()) {
+                    rs.next();
+                    others = rs.getInt(1);
+                }
+            }
+            if (others >= limit) {
+                connection.rollback();
+                return EmailUpdate.LIMIT;
+            }
+            int updated;
+            try (PreparedStatement ps = connection.prepareStatement("UPDATE accounts SET email = ? WHERE name_lower = ?")) {
+                ps.setString(1, email);
+                ps.setString(2, key(name));
+                updated = ps.executeUpdate();
+            }
+            connection.commit();
+            return updated > 0 ? EmailUpdate.OK : EmailUpdate.NO_ACCOUNT;
+        } catch (SQLException | RuntimeException e) {
+            connection.rollback();
+            throw e;
+        } finally {
+            connection.setAutoCommit(true);
+        }
+    }
+
     public synchronized boolean updatePassword(String name, String passwordHash) throws SQLException {
         try (PreparedStatement ps = connection.prepareStatement(
                 "UPDATE accounts SET password_hash = ? WHERE name_lower = ?")) {

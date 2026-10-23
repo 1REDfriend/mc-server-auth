@@ -5,8 +5,7 @@ import dev.tongt.mcserverauth.config.Messages;
 import dev.tongt.mcserverauth.email.CodeService;
 import dev.tongt.mcserverauth.email.CodeService.Purpose;
 import dev.tongt.mcserverauth.email.EmailAddress;
-import dev.tongt.mcserverauth.email.MailSender;
-import dev.tongt.mcserverauth.email.MailSender.Sending;
+import dev.tongt.mcserverauth.flow.CodeMailer.SendResult;
 import dev.tongt.mcserverauth.flow.DialogWaiter.Response;
 import dev.tongt.mcserverauth.security.AttemptLimiter;
 import dev.tongt.mcserverauth.security.IpKey;
@@ -38,8 +37,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 import java.util.logging.Level;
@@ -51,7 +48,6 @@ import java.util.logging.Logger;
  */
 public final class LoginFlow implements Listener {
     private static final int MAX_REGISTER_SENDS_PER_CONNECTION = 3;
-    private static final long MAIL_SEND_TIMEOUT_SECONDS = 30;
     /** The server-password dialog waits at most this long, so idling on it cannot hold a name for long. */
     private static final Duration SERVER_PASSWORD_TIMEOUT = Duration.ofSeconds(30);
     /** Connections from one IP that may be in the login flow at the same time. */
@@ -113,7 +109,7 @@ public final class LoginFlow implements Listener {
     private final AttemptLimiter limiter;
     private final SessionCache sessions;
     private final CodeService codes;
-    private final MailSender mail;
+    private final CodeMailer mailer;
     private final Clock clock;
     private final Logger logger;
 
@@ -131,7 +127,7 @@ public final class LoginFlow implements Listener {
 
     public LoginFlow(AuthConfig config, Messages messages, DialogFactory dialogs, DialogWaiter waiter,
                      AccountStore store, PasswordHasher hasher, PasswordRules rules, AttemptLimiter limiter,
-                     SessionCache sessions, CodeService codes, MailSender mail, Clock clock, Logger logger) {
+                     SessionCache sessions, CodeService codes, CodeMailer mailer, Clock clock, Logger logger) {
         this.config = config;
         this.messages = messages;
         this.dialogs = dialogs;
@@ -142,7 +138,7 @@ public final class LoginFlow implements Listener {
         this.limiter = limiter;
         this.sessions = sessions;
         this.codes = codes;
-        this.mail = mail;
+        this.mailer = mailer;
         this.clock = clock;
         this.logger = logger;
     }
@@ -318,13 +314,15 @@ public final class LoginFlow implements Listener {
         return denial;
     }
 
+    /**
+     * Email is optional. Left blank (or when SMTP is not configured) the account is created without one and only
+     * an admin can reset its password; filled in, it must be confirmed with an emailed code first.
+     */
     private @Nullable Component register(Session s, String serverHash) throws TimeoutException, SQLException {
-        if (!mail.available()) {
-            return messages.get("kick.registration-unavailable");
-        }
+        boolean withEmail = mailer.available();
         Component error = null;
         while (true) {
-            Response r = prompt(s, dialogs.register(error));
+            Response r = prompt(s, dialogs.register(error, withEmail));
             if (!r.is(DialogFactory.SUBMIT)) {
                 return messages.get("kick.cancelled");
             }
@@ -338,7 +336,16 @@ public final class LoginFlow implements Listener {
                 error = messages.get(problem.get(), rules.placeholders());
                 continue;
             }
-            Optional<EmailAddress> email = EmailAddress.parse(r.text("email"));
+            String rawEmail = withEmail ? r.text("email") : "";
+            if (rawEmail.isBlank()) {
+                if (hasher.verify(password, serverHash)) {
+                    error = messages.get("error.password-same-as-server");
+                    continue;
+                }
+                store.create(s.name, hasher.hash(password), "", clock.millis());
+                return null;
+            }
+            Optional<EmailAddress> email = EmailAddress.parse(rawEmail);
             if (email.isEmpty()) {
                 error = messages.get("error.email-invalid");
                 continue;
@@ -411,6 +418,12 @@ public final class LoginFlow implements Listener {
     }
 
     private StepResult forgot(Session s, Account account, String serverHash) throws TimeoutException, SQLException {
+        if (!mailer.available()) {
+            return StepResult.back(messages.get("error.reset-unavailable"));
+        }
+        if (!account.hasEmail()) {
+            return StepResult.back(messages.get("error.reset-no-email"));
+        }
         EmailAddress email = new EmailAddress(account.email());
         Component menuError = null;
         Component codeNotice = null;
@@ -420,9 +433,6 @@ public final class LoginFlow implements Listener {
                 return StepResult.back(null);
             }
             if (r.is(DialogFactory.SEND_CODE)) {
-                if (!mail.available()) {
-                    return StepResult.back(messages.get("error.reset-unavailable"));
-                }
                 SendResult send = sendCode(s, Purpose.RESET, email);
                 if (!send.sent()) {
                     menuError = send.message(); // includes the reset cooldown
@@ -517,86 +527,24 @@ public final class LoginFlow implements Listener {
         }
     }
 
-    /**
-     * Result of one send. {@code sent} is true when a code was issued and is, or may still be, on its way; then
-     * {@code message} is an optional notice for the code dialog. When false, {@code message} is the error.
-     */
-    private record SendResult(boolean sent, @Nullable Component message) {
-        static SendResult ok() { return new SendResult(true, null); }
-        static SendResult slow(Component notice) { return new SendResult(true, notice); }
-        static SendResult failed(Component error) { return new SendResult(false, error); }
-    }
-
     /** Why a code cannot be sent right now, or null if it can. Issues nothing. */
     private @Nullable Component sendBlocked(Session s, Purpose purpose) {
         if (purpose == Purpose.REGISTER && s.registerSends >= MAX_REGISTER_SENDS_PER_CONNECTION) {
             return messages.get("error.too-many-codes");
         }
-        return codes.cooldownRemaining(purpose, s.key, s.ipKey).map(this::cooldownMessage).orElse(null);
-    }
-
-    private Component cooldownMessage(Duration remaining) {
-        long seconds = Math.max(1, (remaining.toMillis() + 999) / 1000);
-        return messages.get("error.code-cooldown", Placeholder.unparsed("seconds", Long.toString(seconds)));
+        return mailer.cooldown(purpose, s.key, s.ipKey);
     }
 
     /** Issues a code and emails it. */
     private SendResult sendCode(Session s, Purpose purpose, EmailAddress email) {
         if (purpose == Purpose.REGISTER && s.registerSends >= MAX_REGISTER_SENDS_PER_CONNECTION) {
-            return SendResult.failed(messages.get("error.too-many-codes"));
+            return new SendResult(false, messages.get("error.too-many-codes"));
         }
-        String ip = s.ipKey;
-        CodeService.Issue issue = codes.issue(purpose, s.key, ip);
-        if (issue instanceof CodeService.CoolingDown wait) {
-            return SendResult.failed(cooldownMessage(wait.remaining()));
-        }
-        CodeService.Issued issued = (CodeService.Issued) issue;
-        String code = issued.code();
-        Map<String, String> vars = Map.of(
-                "name", s.name,
-                "code", code,
-                "minutes", Long.toString(config.codeValidity().toMinutes()));
-        boolean register = purpose == Purpose.REGISTER;
-        String subject = messages.plain(register ? "email.register.subject" : "email.reset.subject", vars);
-        String body = messages.plain(register ? "email.register.body" : "email.reset.body", vars);
-        Sending sending = mail.send(email.value(), subject, body);
-        try {
-            sending.done().get(MAIL_SEND_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        } catch (TimeoutException e) {
-            if (sending.withdraw().getAsBoolean()) {
-                // Still waiting for a mail thread: it will never go out now, so treat it as a failure and refund.
-                logger.warning("The " + purpose + " email for " + s.name + " was still queued after "
-                        + MAIL_SEND_TIMEOUT_SECONDS + " s; withdrawn");
-                codes.cancelIssue(purpose, s.key, ip, issued);
-                return SendResult.failed(messages.get("error.email-send-failed"));
-            }
-            // Already handed to the SMTP client, which may still deliver it: keep the code and count the send.
-            logger.warning("Sending the " + purpose + " email for " + s.name + " is taking longer than "
-                    + MAIL_SEND_TIMEOUT_SECONDS + " s; the code stays valid");
-            countSend(s, purpose);
-            return SendResult.slow(messages.get("error.email-slow"));
-        } catch (ExecutionException e) {
-            logger.log(Level.WARNING, "Could not send " + purpose + " email for " + s.name, e);
-            codes.cancelIssue(purpose, s.key, ip, issued);
-            return SendResult.failed(messages.get("error.email-send-failed"));
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            if (!sending.withdraw().getAsBoolean()) {
-                // It may still arrive; keep the code, like the slow path.
-                countSend(s, purpose);
-                return SendResult.slow(messages.get("error.email-slow"));
-            }
-            codes.cancelIssue(purpose, s.key, ip, issued);
-            return SendResult.failed(messages.get("error.email-send-failed"));
-        }
-        countSend(s, purpose);
-        return SendResult.ok();
-    }
-
-    private static void countSend(Session s, Purpose purpose) {
-        if (purpose == Purpose.REGISTER) {
+        SendResult result = mailer.send(purpose, s.key, s.name, s.ipKey, email);
+        if (result.sent() && purpose == Purpose.REGISTER) {
             s.registerSends++;
         }
+        return result;
     }
 
     /** Counts one wrong password. Returns the disconnect message once a limit is reached. */

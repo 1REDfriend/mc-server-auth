@@ -8,6 +8,9 @@ permissions:
   mcserverauth.changepassword:
     description: Use /changepassword
     default: true
+  mcserverauth.email:
+    description: Use /email
+    default: true
   mcserverauth.admin:
     description: Use /authadmin
     default: op

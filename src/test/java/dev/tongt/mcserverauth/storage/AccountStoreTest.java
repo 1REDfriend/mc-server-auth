@@ -39,6 +39,16 @@ class AccountStoreTest {
     }
 
     @Test
+    void accountWithoutEmail() throws SQLException {
+        store.create("Alex", "hash1", "", 1000L);
+        Account account = store.find("alex").orElseThrow();
+        assertFalse(account.hasEmail());
+        assertEquals(0, store.countByEmail("steve@example.com"));
+        store.create("Steve", "hash2", "steve@example.com", 1000L);
+        assertTrue(store.find("steve").orElseThrow().hasEmail());
+    }
+
+    @Test
     void missingAccountIsEmpty() throws SQLException {
         assertEquals(Optional.empty(), store.find("nobody"));
     }
@@ -94,6 +104,35 @@ class AccountStoreTest {
         assertEquals(0, store.countByEmail("b@example.com"));
         store.create("Alex", "h", "c@example.com", 1L);
         assertTrue(store.find("alex").isPresent());
+    }
+
+    @Test
+    void updateEmailIfBelowSetsTheEmail() throws SQLException {
+        store.create("Alex", "h", "", 1L);
+        assertEquals(AccountStore.EmailUpdate.OK, store.updateEmailIfBelow("alex", "alex@example.com", 3));
+        assertEquals("alex@example.com", store.find("alex").orElseThrow().email());
+    }
+
+    @Test
+    void updateEmailIfBelowRespectsTheLimitIgnoringCase() throws SQLException {
+        store.create("A", "h", "same@example.com", 1L);
+        store.create("B", "h", "Same@example.com", 1L);
+        store.create("C", "h", "", 1L);
+        assertEquals(AccountStore.EmailUpdate.LIMIT, store.updateEmailIfBelow("c", "SAME@example.com", 2));
+        assertFalse(store.find("c").orElseThrow().hasEmail());
+    }
+
+    @Test
+    void updateEmailIfBelowDoesNotCountTheAccountItself() throws SQLException {
+        store.create("A", "h", "same@example.com", 1L);
+        store.create("B", "h", "same@example.com", 1L);
+        // B only changes the letter case of its own address: still two accounts on it.
+        assertEquals(AccountStore.EmailUpdate.OK, store.updateEmailIfBelow("b", "Same@example.com", 2));
+    }
+
+    @Test
+    void updateEmailIfBelowReportsAMissingAccount() throws SQLException {
+        assertEquals(AccountStore.EmailUpdate.NO_ACCOUNT, store.updateEmailIfBelow("ghost", "g@example.com", 3));
     }
 
     @Test

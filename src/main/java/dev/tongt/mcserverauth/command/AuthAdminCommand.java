@@ -165,7 +165,7 @@ public final class AuthAdminCommand implements BasicCommand {
             Account a = found.get();
             sender.sendMessage(messages.get("command.info",
                     Placeholder.unparsed("name", a.displayName()),
-                    Placeholder.unparsed("email", a.email()),
+                    Placeholder.unparsed("email", a.hasEmail() ? a.email() : "-"),
                     Placeholder.unparsed("created", Instant.ofEpochMilli(a.createdAt()).toString()),
                     Placeholder.unparsed("last_login", a.lastLoginAt() == null ? "-" : Instant.ofEpochMilli(a.lastLoginAt()).toString()),
                     Placeholder.unparsed("last_ip", a.lastIp() == null ? "-" : a.lastIp())));

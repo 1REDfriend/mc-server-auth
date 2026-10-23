@@ -15,12 +15,19 @@ password:
 session-remember:
   enabled: false       # skip dialogs on reconnect from the same IP
   minutes: 5
+# Debugging aid. Records everything players type into this plugin's dialogs, PASSWORDS INCLUDED, exactly as their
+# client sent it, to plugins/McServerAuth/secret-input-logs/ (one file per UTC day). Values are base64-encoded, which
+# is NOT encryption: anyone who can read these files can read every player's real password, and players often reuse
+# passwords elsewhere. Turn it on only while hunting a bug, then turn it off and delete the files.
+secret-input-log:
+  enabled: false
+  keep-days: 7         # files older than this are deleted automatically
 email:
   max-accounts-per-email: 3
   code-valid-minutes: 15
   code-max-attempts: 5 # wrong codes (from the IP that asked for it) before a code is burned; 1-10
   smtp:
-    host: ""           # e.g. smtp.gmail.com; blank disables registration and reset
+    host: ""           # e.g. smtp.gmail.com; blank = no email: players register without one, admins reset passwords
     port: 587
     security: starttls # starttls | ssl | none (none only for a local test mail server)
     username: ""
